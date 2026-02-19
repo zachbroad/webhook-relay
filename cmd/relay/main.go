@@ -1,0 +1,121 @@
+package main
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/redis/go-redis/v9"
+	"github.com/zachbroad/webhook-relay/internal/config"
+	"github.com/zachbroad/webhook-relay/internal/database"
+	"github.com/zachbroad/webhook-relay/internal/handler"
+	"github.com/zachbroad/webhook-relay/internal/store"
+	"github.com/zachbroad/webhook-relay/internal/worker"
+)
+
+func main() {
+	cfg := config.Load()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	// Connect to Postgres
+	pool, err := database.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+	slog.Info("connected to postgres")
+
+	// Connect to Redis
+	opts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		slog.Error("failed to parse redis URL", "error", err)
+		os.Exit(1)
+	}
+	rdb := redis.NewClient(opts)
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		slog.Error("failed to connect to redis", "error", err)
+		os.Exit(1)
+	}
+	defer rdb.Close()
+	slog.Info("connected to redis")
+
+	// Initialize store and handlers
+	s := store.New(pool)
+	webhookH := handler.NewWebhookHandler(s, rdb)
+	subscriptionH := handler.NewSubscriptionHandler(s)
+	deliveryH := handler.NewDeliveryHandler(s)
+
+	// Routes
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.RequestID)
+
+	// GET /healthz
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	// POST /webhooks/{sourceSlug}
+	r.Post("/webhooks/{sourceSlug}", webhookH.Ingest)
+
+	r.Route("/sources/{sourceSlug}/subscriptions", func(r chi.Router) {
+		// POST /sources/{sourceSlug}/subscriptions
+		r.Post("/", subscriptionH.Create)
+		// GET /sources/{sourceSlug}/subscriptions
+		r.Get("/", subscriptionH.List)
+		// GET /sources/{sourceSlug}/subscriptions/{id}
+		r.Get("/{id}", subscriptionH.Get)
+		// PATCH /sources/{sourceSlug}/subscriptions/{id}
+		r.Patch("/{id}", subscriptionH.Update)
+		// DELETE /sources/{sourceSlug}/subscriptions/{id}
+		r.Delete("/{id}", subscriptionH.Delete)
+	})
+
+	// GET /deliveries
+	r.Get("/deliveries", deliveryH.List)
+
+	// Start fan-out worker
+	w := worker.New(s, rdb, cfg.WorkerConcurrency, cfg.MaxRetries, cfg.RetryBaseDelay, cfg.DeliveryTimeout, cfg.PollInterval)
+	if err := w.Start(ctx); err != nil {
+		slog.Error("failed to start worker", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("fan-out worker started", "concurrency", cfg.WorkerConcurrency)
+
+	// Start HTTP server
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: r,
+	}
+
+	go func() {
+		slog.Info("server listening", "port", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server error", "error", err)
+			cancel()
+		}
+	}()
+
+	// Wait for shutdown signal
+	<-ctx.Done()
+	slog.Info("shutting down...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("shutdown error", "error", err)
+	}
+	slog.Info("server stopped")
+}
