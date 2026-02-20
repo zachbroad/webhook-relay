@@ -1,15 +1,22 @@
-.PHONY: run build test docker-up docker-down migrate-up migrate-down migrate-create
+.PHONY: run-api run-worker build test docker-build docker-up docker-down migrate-up migrate-down migrate-create
 
 DATABASE_URL ?= postgres://relay:relay@localhost:5432/webhook_relay?sslmode=disable
 
-run:
-	go run ./cmd/relay
+run-api:
+	go run ./cmd/api
+
+run-worker:
+	go run ./cmd/worker
 
 build:
-	go build -o bin/relay ./cmd/relay
+	go build -o bin/api ./cmd/api
+	go build -o bin/worker ./cmd/worker
 
 test:
 	go test ./...
+
+docker-build:
+	docker compose build
 
 docker-up:
 	docker compose up -d

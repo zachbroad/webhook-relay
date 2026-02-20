@@ -108,6 +108,7 @@ func (w *FanoutWorker) consumeStream(ctx context.Context, consumer string) {
 
 				w.processDelivery(ctx, deliveryID)
 				w.rdb.XAck(ctx, streamName, consumerGroup, msg.ID)
+				w.rdb.XDel(ctx, streamName, msg.ID)
 			}
 		}
 	}

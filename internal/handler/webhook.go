@@ -81,6 +81,8 @@ func (h *WebhookHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 func (h *WebhookHandler) publishToStream(ctx context.Context, deliveryID uuid.UUID) error {
 	return h.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: "deliveries",
+		MaxLen: 10000,
+		Approx: true,
 		Values: map[string]any{"delivery_id": deliveryID.String()},
 	}).Err()
 }

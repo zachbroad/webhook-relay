@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 	"github.com/zachbroad/webhook-relay/internal/config"
 	"github.com/zachbroad/webhook-relay/internal/database"
@@ -20,6 +21,7 @@ import (
 )
 
 func main() {
+	_ = godotenv.Load()
 	cfg := config.Load()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -56,33 +58,23 @@ func main() {
 
 	// Routes
 	r := chi.NewRouter()
+	r.Use(middleware.Heartbeat("/healthz"))
+	r.Use(middleware.CleanPath)
+	r.Use(middleware.StripSlashes)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 
-	// GET /healthz
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
-
-	// POST /webhooks/{sourceSlug}
 	r.Post("/webhooks/{sourceSlug}", webhookH.Ingest)
 
 	r.Route("/sources/{sourceSlug}/subscriptions", func(r chi.Router) {
-		// POST /sources/{sourceSlug}/subscriptions
 		r.Post("/", subscriptionH.Create)
-		// GET /sources/{sourceSlug}/subscriptions
 		r.Get("/", subscriptionH.List)
-		// GET /sources/{sourceSlug}/subscriptions/{id}
 		r.Get("/{id}", subscriptionH.Get)
-		// PATCH /sources/{sourceSlug}/subscriptions/{id}
 		r.Patch("/{id}", subscriptionH.Update)
-		// DELETE /sources/{sourceSlug}/subscriptions/{id}
 		r.Delete("/{id}", subscriptionH.Delete)
 	})
 
-	// GET /deliveries
 	r.Get("/deliveries", deliveryH.List)
 
 	// Start fan-out worker
@@ -107,7 +99,6 @@ func main() {
 		}
 	}()
 
-	// Wait for shutdown signal
 	<-ctx.Done()
 	slog.Info("shutting down...")
 
