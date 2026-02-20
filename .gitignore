@@ -1,5 +1,7 @@
 # Binaries
 /bin/
+/kubectl
+/minikube-*
 *.exe
 *.exe~
 *.dll
