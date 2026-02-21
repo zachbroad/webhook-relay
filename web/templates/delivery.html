@@ -1,0 +1,42 @@
+{{define "content"}}
+<div class="breadcrumb"><a href="/deliveries">Deliveries</a> / {{shortID .Delivery.ID}}</div>
+<h1>Delivery {{shortID .Delivery.ID}}</h1>
+<div class="card">
+  <dl class="meta-grid">
+    <dt>ID</dt><dd><code>{{.Delivery.ID}}</code></dd>
+    <dt>Source ID</dt><dd><code>{{.Delivery.SourceID}}</code></dd>
+    <dt>Status</dt><dd><span class="badge badge-{{.Delivery.Status}}">{{.Delivery.Status}}</span></dd>
+    <dt>Idempotency Key</dt><dd><code>{{.Delivery.IdempotencyKey}}</code></dd>
+    <dt>Received</dt><dd>{{formatTime .Delivery.ReceivedAt}}</dd>
+  </dl>
+</div>
+<div class="card">
+  <h2>Headers</h2>
+  <pre class="json">{{formatJSON .Delivery.Headers}}</pre>
+</div>
+<div class="card">
+  <h2>Payload</h2>
+  <pre class="json">{{formatJSON .Delivery.Payload}}</pre>
+</div>
+<div class="card">
+  <h2>Delivery Attempts</h2>
+  {{if .Attempts}}
+  <table>
+    <thead><tr><th>#</th><th>Status</th><th>HTTP Status</th><th>Error</th><th>Created</th></tr></thead>
+    <tbody>
+      {{range .Attempts}}
+      <tr>
+        <td>{{.AttemptNumber}}</td>
+        <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+        <td>{{derefInt .ResponseStatus}}</td>
+        <td>{{derefStr .ErrorMessage}}</td>
+        <td>{{formatTime .CreatedAt}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">No attempts yet.</div>
+  {{end}}
+</div>
+{{end}}

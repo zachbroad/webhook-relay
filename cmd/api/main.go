@@ -17,11 +17,12 @@ import (
 	"github.com/zachbroad/webhook-relay/internal/database"
 	"github.com/zachbroad/webhook-relay/internal/handler"
 	"github.com/zachbroad/webhook-relay/internal/store"
+	"github.com/zachbroad/webhook-relay/web"
 )
 
 func main() {
-	_ = godotenv.Load()
-	cfg := config.Load()
+	_ = godotenv.Load()  // Load .env file
+	cfg := config.Load() // Load config from environment variables
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -52,8 +53,10 @@ func main() {
 	// Initialize store and handlers
 	s := store.New(pool)
 	webhookH := handler.NewWebhookHandler(s, rdb)
+	sourceH := handler.NewSourceHandler(s)
 	subscriptionH := handler.NewSubscriptionHandler(s)
 	deliveryH := handler.NewDeliveryHandler(s)
+	webH := web.NewHandler(s)
 
 	// Routes
 	r := chi.NewRouter()
@@ -64,17 +67,48 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 
+	// Web UI
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/sources", http.StatusFound)
+	})
+	r.Get("/sources", webH.Sources)
+	r.Post("/sources", webH.CreateSource)
+	r.Get("/sources/{slug}", webH.SourceDetail)
+	r.Post("/sources/{slug}/update", webH.UpdateSource)
+	r.Delete("/sources/{slug}", webH.DeleteSource)
+	r.Post("/sources/{slug}/subscriptions", webH.CreateSubscription)
+	r.Post("/sources/{slug}/subscriptions/{id}/toggle", webH.ToggleSubscription)
+	r.Delete("/sources/{slug}/subscriptions/{id}", webH.DeleteSubscription)
+	r.Get("/deliveries", webH.Deliveries)
+	r.Get("/deliveries/{id}", webH.DeliveryDetail)
+
+	// Webhook ingest
 	r.Post("/webhooks/{sourceSlug}", webhookH.Ingest)
 
-	r.Route("/sources/{sourceSlug}/subscriptions", func(r chi.Router) {
-		r.Post("/", subscriptionH.Create)
-		r.Get("/", subscriptionH.List)
-		r.Get("/{id}", subscriptionH.Get)
-		r.Patch("/{id}", subscriptionH.Update)
-		r.Delete("/{id}", subscriptionH.Delete)
+	// JSON API
+	r.Route("/api", func(r chi.Router) {
+		r.Route("/sources", func(r chi.Router) {
+			r.Get("/", sourceH.List)
+			r.Post("/", sourceH.Create)
+			r.Route("/{sourceSlug}", func(r chi.Router) {
+				r.Get("/", sourceH.Get)
+				r.Patch("/", sourceH.Update)
+				r.Delete("/", sourceH.Delete)
+				r.Route("/subscriptions", func(r chi.Router) {
+					r.Post("/", subscriptionH.Create)
+					r.Get("/", subscriptionH.List)
+					r.Get("/{id}", subscriptionH.Get)
+					r.Patch("/{id}", subscriptionH.Update)
+					r.Delete("/{id}", subscriptionH.Delete)
+				})
+			})
+		})
+		r.Route("/deliveries", func(r chi.Router) {
+			r.Get("/", deliveryH.List)
+			r.Get("/{id}", deliveryH.Get)
+			r.Get("/{id}/attempts", deliveryH.ListAttempts)
+		})
 	})
-
-	r.Get("/deliveries", deliveryH.List)
 
 	// Start HTTP server
 	srv := &http.Server{

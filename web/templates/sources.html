@@ -1,0 +1,29 @@
+{{define "content"}}
+<h1>Sources</h1>
+{{if .Error}}<div class="error-msg">{{.Error}}</div>{{end}}
+<div class="card">
+  <h2>New Source</h2>
+  <form action="/sources" method="POST" class="form-inline">
+    <input type="text" name="name" placeholder="Source name" style="flex:1;min-width:200px" required>
+    <button type="submit" class="btn btn-primary">Create</button>
+  </form>
+</div>
+<div class="card">
+  {{if .Sources}}
+  <table>
+    <thead><tr><th>Name</th><th>Slug</th><th>Created</th></tr></thead>
+    <tbody>
+      {{range .Sources}}
+      <tr>
+        <td><a href="/sources/{{.Slug}}">{{.Name}}</a></td>
+        <td><code>{{.Slug}}</code></td>
+        <td>{{formatTime .CreatedAt}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">No sources yet. Create one above.</div>
+  {{end}}
+</div>
+{{end}}

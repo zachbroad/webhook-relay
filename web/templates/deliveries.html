@@ -1,0 +1,38 @@
+{{define "content"}}
+<h1>Deliveries</h1>
+<div class="card">
+  <div class="form-inline">
+    <label style="font-size:0.85rem;font-weight:500">Filter by source:</label>
+    <select name="source"
+      hx-get="/deliveries"
+      hx-target="#main-content"
+      hx-select="#main-content"
+      hx-swap="outerHTML"
+      hx-push-url="true">
+      <option value="">All sources</option>
+      {{range .Sources}}
+      <option value="{{.Slug}}" {{if eq $.SourceFilter .Slug}}selected{{end}}>{{.Name}}</option>
+      {{end}}
+    </select>
+  </div>
+</div>
+<div class="card">
+  {{if .Deliveries}}
+  <table>
+    <thead><tr><th>ID</th><th>Status</th><th>Idempotency Key</th><th>Received</th></tr></thead>
+    <tbody>
+      {{range .Deliveries}}
+      <tr>
+        <td><a href="/deliveries/{{.ID}}"><code>{{shortID .ID}}</code></a></td>
+        <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+        <td><code>{{.IdempotencyKey}}</code></td>
+        <td>{{formatTime .ReceivedAt}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">No deliveries found.</div>
+  {{end}}
+</div>
+{{end}}
