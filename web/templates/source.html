@@ -71,7 +71,8 @@
   <form hx-post="/sources/{{.Source.Slug}}/script"
         hx-target="#script-card"
         hx-swap="outerHTML">
-    <textarea name="script_body" id="script-body">{{if .Source.ScriptBody}}{{derefStr .Source.ScriptBody}}{{else}}function transform(event) {
+    <div id="monaco-container"></div>
+    <textarea name="script_body" id="script-body" style="display:none">{{if .Source.ScriptBody}}{{derefStr .Source.ScriptBody}}{{else}}function transform(event) {
   // event.payload       — the JSON body (object)
   // event.headers       — captured headers (object)
   // event.subscriptions — [{id, target_url}, ...]
