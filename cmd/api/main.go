@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,18 +10,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 	"github.com/zachbroad/webhook-relay/internal/config"
 	"github.com/zachbroad/webhook-relay/internal/database"
 	"github.com/zachbroad/webhook-relay/internal/handler"
 	"github.com/zachbroad/webhook-relay/internal/store"
+	"github.com/zachbroad/webhook-relay/internal/worker"
 	"github.com/zachbroad/webhook-relay/web"
 )
 
 func main() {
+	withWorker := flag.Bool("worker", false, "also run the fan-out worker in-process")
+	flag.Parse()
+
 	_ = godotenv.Load()  // Load .env file
 	cfg := config.Load() // Load config from environment variables
 
@@ -59,56 +63,75 @@ func main() {
 	webH := web.NewHandler(s)
 
 	// Routes
-	r := chi.NewRouter()
-	r.Use(middleware.Heartbeat("/healthz"))
-	r.Use(middleware.CleanPath)
-	r.Use(middleware.StripSlashes)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.RequestID)
+	r := gin.Default()
+	r.RedirectFixedPath = true
+	r.RedirectTrailingSlash = true
+
+	r.GET("/healthz", func(c *gin.Context) {
+		c.String(http.StatusOK, ".")
+	})
 
 	// Web UI
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/sources", http.StatusFound)
+	r.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/sources")
 	})
-	r.Get("/sources", webH.Sources)
-	r.Post("/sources", webH.CreateSource)
-	r.Get("/sources/{slug}", webH.SourceDetail)
-	r.Post("/sources/{slug}/update", webH.UpdateSource)
-	r.Delete("/sources/{slug}", webH.DeleteSource)
-	r.Post("/sources/{slug}/subscriptions", webH.CreateSubscription)
-	r.Post("/sources/{slug}/subscriptions/{id}/toggle", webH.ToggleSubscription)
-	r.Delete("/sources/{slug}/subscriptions/{id}", webH.DeleteSubscription)
-	r.Get("/deliveries", webH.Deliveries)
-	r.Get("/deliveries/{id}", webH.DeliveryDetail)
+	r.GET("/sources", webH.Sources)
+	r.POST("/sources", webH.CreateSource)
+	r.GET("/sources/:slug", webH.SourceDetail)
+	r.POST("/sources/:slug/update", webH.UpdateSource)
+	r.DELETE("/sources/:slug", webH.DeleteSource)
+	r.POST("/sources/:slug/mode", webH.UpdateSourceMode)
+	r.POST("/sources/:slug/script", webH.UpdateSourceScript)
+	r.POST("/sources/:slug/script/clear", webH.ClearSourceScript)
+	r.POST("/sources/:slug/script/test", webH.TestSourceScript)
+	r.POST("/sources/:slug/subscriptions", webH.CreateSubscription)
+	r.POST("/sources/:slug/subscriptions/:id/toggle", webH.ToggleSubscription)
+	r.DELETE("/sources/:slug/subscriptions/:id", webH.DeleteSubscription)
+	r.GET("/deliveries", webH.Deliveries)
+	r.GET("/deliveries/:id", webH.DeliveryDetail)
 
 	// Webhook ingest
-	r.Post("/webhooks/{sourceSlug}", webhookH.Ingest)
+	r.POST("/webhooks/:sourceSlug", webhookH.Ingest)
 
 	// JSON API
-	r.Route("/api", func(r chi.Router) {
-		r.Route("/sources", func(r chi.Router) {
-			r.Get("/", sourceH.List)
-			r.Post("/", sourceH.Create)
-			r.Route("/{sourceSlug}", func(r chi.Router) {
-				r.Get("/", sourceH.Get)
-				r.Patch("/", sourceH.Update)
-				r.Delete("/", sourceH.Delete)
-				r.Route("/subscriptions", func(r chi.Router) {
-					r.Post("/", subscriptionH.Create)
-					r.Get("/", subscriptionH.List)
-					r.Get("/{id}", subscriptionH.Get)
-					r.Patch("/{id}", subscriptionH.Update)
-					r.Delete("/{id}", subscriptionH.Delete)
-				})
-			})
-		})
-		r.Route("/deliveries", func(r chi.Router) {
-			r.Get("/", deliveryH.List)
-			r.Get("/{id}", deliveryH.Get)
-			r.Get("/{id}/attempts", deliveryH.ListAttempts)
-		})
-	})
+	api := r.Group("/api")
+	{
+		sources := api.Group("/sources")
+		{
+			sources.GET("", sourceH.List)
+			sources.POST("", sourceH.Create)
+			srcGroup := sources.Group("/:sourceSlug")
+			{
+				srcGroup.GET("", sourceH.Get)
+				srcGroup.PATCH("", sourceH.Update)
+				srcGroup.DELETE("", sourceH.Delete)
+				subs := srcGroup.Group("/subscriptions")
+				{
+					subs.POST("", subscriptionH.Create)
+					subs.GET("", subscriptionH.List)
+					subs.GET("/:id", subscriptionH.Get)
+					subs.PATCH("/:id", subscriptionH.Update)
+					subs.DELETE("/:id", subscriptionH.Delete)
+				}
+			}
+		}
+		deliveries := api.Group("/deliveries")
+		{
+			deliveries.GET("", deliveryH.List)
+			deliveries.GET("/:id", deliveryH.Get)
+			deliveries.GET("/:id/attempts", deliveryH.ListAttempts)
+		}
+	}
+
+	// Optionally start fan-out worker in-process
+	if *withWorker {
+		w := worker.New(s, rdb, cfg.WorkerConcurrency, cfg.MaxRetries, cfg.RetryBaseDelay, cfg.DeliveryTimeout, cfg.PollInterval)
+		if err := w.Start(ctx); err != nil {
+			slog.Error("failed to start worker", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("fan-out worker started", "concurrency", cfg.WorkerConcurrency)
+	}
 
 	// Start HTTP server
 	srv := &http.Server{

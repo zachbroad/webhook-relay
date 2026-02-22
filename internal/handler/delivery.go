@@ -1,10 +1,11 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/zachbroad/webhook-relay/internal/store"
 )
 
@@ -16,29 +17,70 @@ func NewDeliveryHandler(s *store.Store) *DeliveryHandler {
 	return &DeliveryHandler{store: s}
 }
 
-func (h *DeliveryHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *DeliveryHandler) List(c *gin.Context) {
 	var sourceSlug *string
-	if s := r.URL.Query().Get("source"); s != "" {
+	if s := c.Query("source"); s != "" {
 		sourceSlug = &s
 	}
 
 	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
+	if l := c.Query("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 200 {
 			limit = n
 		}
 	}
 
-	deliveries, err := h.store.Deliveries.List(r.Context(), sourceSlug, limit)
+	deliveries, err := h.store.Deliveries.List(c.Request.Context(), sourceSlug, limit)
 	if err != nil {
-		http.Error(w, "failed to list deliveries", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "failed to list deliveries")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	if deliveries == nil {
-		w.Write([]byte("[]"))
+		c.Data(http.StatusOK, "application/json", []byte("[]"))
 		return
 	}
-	json.NewEncoder(w).Encode(deliveries)
+	c.JSON(http.StatusOK, deliveries)
+}
+
+func (h *DeliveryHandler) Get(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusBadRequest, "invalid delivery id")
+		return
+	}
+
+	delivery, err := h.store.Deliveries.GetByID(c.Request.Context(), id)
+	if err != nil {
+		c.String(http.StatusNotFound, "delivery not found")
+		return
+	}
+
+	c.JSON(http.StatusOK, delivery)
+}
+
+func (h *DeliveryHandler) ListAttempts(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusBadRequest, "invalid delivery id")
+		return
+	}
+
+	// Verify delivery exists
+	if _, err := h.store.Deliveries.GetByID(c.Request.Context(), id); err != nil {
+		c.String(http.StatusNotFound, "delivery not found")
+		return
+	}
+
+	attempts, err := h.store.Deliveries.ListAttemptsByDelivery(c.Request.Context(), id)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "failed to list attempts")
+		return
+	}
+
+	if attempts == nil {
+		c.Data(http.StatusOK, "application/json", []byte("[]"))
+		return
+	}
+	c.JSON(http.StatusOK, attempts)
 }

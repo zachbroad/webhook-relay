@@ -18,6 +18,18 @@
   <h2>Payload</h2>
   <pre class="json">{{formatJSON .Delivery.Payload}}</pre>
 </div>
+{{if .Delivery.TransformedPayload}}
+<div class="card">
+  <h2>Transformed Payload</h2>
+  <pre class="json">{{formatJSON .Delivery.TransformedPayload}}</pre>
+</div>
+{{end}}
+{{if .Delivery.TransformedHeaders}}
+<div class="card">
+  <h2>Transformed Headers</h2>
+  <pre class="json">{{formatJSON .Delivery.TransformedHeaders}}</pre>
+</div>
+{{end}}
 <div class="card">
   <h2>Delivery Attempts</h2>
   {{if .Attempts}}

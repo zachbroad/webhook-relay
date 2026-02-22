@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "webhook-relay.fullname" . }}-api
+  labels:
+    {{- include "webhook-relay.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "webhook-relay.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http

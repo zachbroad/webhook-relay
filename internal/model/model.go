@@ -8,11 +8,13 @@ import (
 )
 
 type Source struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Slug      string    `json:"slug"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         uuid.UUID `json:"id"`
+	Name       string    `json:"name"`
+	Slug       string    `json:"slug"`
+	Mode       string    `json:"mode"`
+	ScriptBody *string   `json:"script_body,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type Subscription struct {
@@ -32,16 +34,19 @@ const (
 	DeliveryProcessing DeliveryStatus = "processing"
 	DeliveryCompleted  DeliveryStatus = "completed"
 	DeliveryFailed     DeliveryStatus = "failed"
+	DeliveryRecorded   DeliveryStatus = "recorded"
 )
 
 type Delivery struct {
-	ID             uuid.UUID       `json:"id"`
-	SourceID       uuid.UUID       `json:"source_id"`
-	IdempotencyKey string          `json:"idempotency_key"`
-	Headers        json.RawMessage `json:"headers"`
-	Payload        json.RawMessage `json:"payload"`
-	Status         DeliveryStatus  `json:"status"`
-	ReceivedAt     time.Time       `json:"received_at"`
+	ID                 uuid.UUID       `json:"id"`
+	SourceID           uuid.UUID       `json:"source_id"`
+	IdempotencyKey     string          `json:"idempotency_key"`
+	Headers            json.RawMessage `json:"headers"`
+	Payload            json.RawMessage `json:"payload"`
+	Status             DeliveryStatus  `json:"status"`
+	ReceivedAt         time.Time       `json:"received_at"`
+	TransformedPayload json.RawMessage `json:"transformed_payload,omitempty"`
+	TransformedHeaders json.RawMessage `json:"transformed_headers,omitempty"`
 }
 
 type AttemptStatus string

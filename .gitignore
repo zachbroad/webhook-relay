@@ -1,5 +1,8 @@
 # Binaries
 /bin/
+/api
+/worker
+/relay
 /kubectl
 /minikube-*
 *.exe
@@ -27,6 +30,9 @@ go.work.sum
 *.swp
 *.swo
 *~
+
+# Air
+/tmp/
 
 # OS
 .DS_Store

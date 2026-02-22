@@ -24,14 +24,11 @@ make migrate-down       # Rollback migrations
 make migrate-create     # Create new migration (prompts for name)
 ```
 
-The `cmd/relay` binary combines API + worker in one process — useful for local dev without running two processes.
-
 ## Architecture
 
-Three entry points in `cmd/`:
-- **`cmd/api`** — HTTP server (:8080). Ingests webhooks, manages subscriptions, lists deliveries.
+Two entry points in `cmd/`:
+- **`cmd/api`** — HTTP server (:8080). Ingests webhooks, manages subscriptions, lists deliveries. Pass `--worker` to also run the fan-out worker in-process (used by `air` for local dev).
 - **`cmd/worker`** — Redis Stream consumer + retry poller. Fans out to subscriber URLs. Health endpoint on :8081.
-- **`cmd/relay`** — Combined API + worker in a single process.
 
 **Flow:** Webhook POST → API stores delivery (Postgres, status=pending) → XADD to Redis Stream `deliveries` → Worker XREADGROUP → HTTP POST to each active subscription's `target_url` → Record delivery_attempts → Retry failed attempts with exponential backoff + jitter.
 

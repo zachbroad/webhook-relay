@@ -1,0 +1,107 @@
+## Global image settings
+image:
+  api:
+    repository: webhook-relay-api
+    tag: "" # defaults to appVersion
+    pullPolicy: IfNotPresent
+  worker:
+    repository: webhook-relay-worker
+    tag: ""
+    pullPolicy: IfNotPresent
+  migrate:
+    repository: webhook-relay-migrate
+    tag: ""
+    pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+## Secret management
+secret:
+  create: true
+  # existingSecret: ""  # set to use an external Secret instead
+
+## API configuration
+api:
+  replicaCount: 1
+  migration:
+    enabled: true
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  ingress:
+    enabled: true
+    className: nginx
+    host: webhook-relay.local
+    annotations: {}
+    tls: []
+    #  - secretName: webhook-relay-tls
+    #    hosts:
+    #      - webhook-relay.local
+
+## Worker configuration
+worker:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+## Application config (non-sensitive, goes into ConfigMap)
+appConfig:
+  port: "8080"
+  workerConcurrency: "4"
+  maxRetries: "5"
+  retryBaseDelay: "5s"
+  deliveryTimeout: "10s"
+  pollInterval: "30s"
+
+## Postgres
+postgres:
+  image:
+    repository: postgres
+    tag: "18-alpine"
+    pullPolicy: IfNotPresent
+  user: relay
+  password: relay
+  database: webhook_relay
+  storage: 5Gi
+  storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+## Redis
+redis:
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  storage: 1Gi
+  storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

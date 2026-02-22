@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/zachbroad/webhook-relay/internal/model"
+	"github.com/zachbroad/webhook-relay/internal/script"
 	"github.com/zachbroad/webhook-relay/internal/signing"
 	"github.com/zachbroad/webhook-relay/internal/store"
 )
@@ -25,13 +27,13 @@ const (
 )
 
 type FanoutWorker struct {
-	store           *store.Store
-	rdb             *redis.Client
-	httpClient      *http.Client
-	concurrency     int
-	maxRetries      int
-	retryBaseDelay  time.Duration
-	pollInterval    time.Duration
+	store          *store.Store
+	rdb            *redis.Client
+	httpClient     *http.Client
+	concurrency    int
+	maxRetries     int
+	retryBaseDelay time.Duration
+	pollInterval   time.Duration
 }
 
 func New(s *store.Store, rdb *redis.Client, concurrency, maxRetries int, retryBaseDelay, deliveryTimeout, pollInterval time.Duration) *FanoutWorker {
@@ -125,6 +127,19 @@ func (w *FanoutWorker) processDelivery(ctx context.Context, deliveryID uuid.UUID
 		return
 	}
 
+	// Fetch the source to check mode and get script
+	src, err := w.store.Sources.GetByID(ctx, delivery.SourceID)
+	if err != nil {
+		slog.Error("failed to get source for delivery", "error", err, "delivery_id", deliveryID)
+		return
+	}
+
+	// Guard against race: if source switched to record mode after webhook was accepted
+	if src.Mode == "record" {
+		w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryRecorded)
+		return
+	}
+
 	if err := w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryProcessing); err != nil {
 		slog.Error("failed to update delivery status", "error", err, "delivery_id", deliveryID)
 		return
@@ -141,9 +156,66 @@ func (w *FanoutWorker) processDelivery(ctx context.Context, deliveryID uuid.UUID
 		return
 	}
 
+	// Determine payload and headers to use for dispatch
+	payload := delivery.Payload
+	headers := delivery.Headers
+	activeSubs := subs
+
+	// Run transform script if source has one
+	if src.ScriptBody != nil && *src.ScriptBody != "" {
+		transformResult, err := w.runTransform(*src.ScriptBody, delivery, subs)
+		if err != nil {
+			slog.Error("script execution failed", "error", err, "delivery_id", deliveryID)
+			w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryFailed)
+			return
+		}
+
+		if transformResult.Dropped {
+			slog.Info("script dropped delivery", "delivery_id", deliveryID)
+			w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryCompleted)
+			return
+		}
+
+		// Marshal transformed data
+		transformedPayload, err := json.Marshal(transformResult.Payload)
+		if err != nil {
+			slog.Error("failed to marshal transformed payload", "error", err, "delivery_id", deliveryID)
+			w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryFailed)
+			return
+		}
+		transformedHeaders, err := json.Marshal(transformResult.Headers)
+		if err != nil {
+			slog.Error("failed to marshal transformed headers", "error", err, "delivery_id", deliveryID)
+			w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryFailed)
+			return
+		}
+
+		// Persist transformed data for retries
+		if err := w.store.Deliveries.SetTransformed(ctx, deliveryID, transformedPayload, transformedHeaders); err != nil {
+			slog.Error("failed to persist transformed data", "error", err, "delivery_id", deliveryID)
+		}
+
+		payload = transformedPayload
+		headers = transformedHeaders
+
+		// Filter subscriptions to only those the script kept
+		if len(transformResult.Subscriptions) > 0 {
+			activeSubs = filterSubscriptions(subs, transformResult.Subscriptions)
+		} else {
+			// Script filtered all subscriptions out
+			w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryCompleted)
+			return
+		}
+	}
+
+	if len(activeSubs) == 0 {
+		w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryCompleted)
+		return
+	}
+
 	allSuccess := true
-	for _, sub := range subs {
-		success := w.dispatchToSubscription(ctx, delivery, &sub, 1)
+	for _, sub := range activeSubs {
+		success := w.dispatchToSubscriptionWithPayload(ctx, delivery, &sub, 1, payload, headers)
 		if !success {
 			allSuccess = false
 		}
@@ -154,14 +226,72 @@ func (w *FanoutWorker) processDelivery(ctx context.Context, deliveryID uuid.UUID
 	}
 }
 
+// runTransform executes the source's JS transform script against the delivery.
+func (w *FanoutWorker) runTransform(scriptBody string, delivery *model.Delivery, subs []model.Subscription) (*script.TransformResult, error) {
+	// Parse payload into a map
+	var payloadMap map[string]any
+	if err := json.Unmarshal(delivery.Payload, &payloadMap); err != nil {
+		return nil, fmt.Errorf("unmarshal payload: %w", err)
+	}
+
+	// Parse headers into a map
+	var headersMap map[string]string
+	if err := json.Unmarshal(delivery.Headers, &headersMap); err != nil {
+		return nil, fmt.Errorf("unmarshal headers: %w", err)
+	}
+
+	// Build subscription refs
+	subRefs := make([]script.SubscriptionRef, len(subs))
+	for i, s := range subs {
+		subRefs[i] = script.SubscriptionRef{ID: s.ID, TargetURL: s.TargetURL}
+	}
+
+	input := script.TransformInput{
+		Payload:       payloadMap,
+		Headers:       headersMap,
+		Subscriptions: subRefs,
+	}
+
+	return script.Run(scriptBody, input)
+}
+
+// filterSubscriptions returns only the subscriptions whose IDs appear in the script result.
+func filterSubscriptions(all []model.Subscription, kept []script.SubscriptionRef) []model.Subscription {
+	keptIDs := make(map[uuid.UUID]bool, len(kept))
+	for _, s := range kept {
+		keptIDs[s.ID] = true
+	}
+
+	var filtered []model.Subscription
+	for _, s := range all {
+		if keptIDs[s.ID] {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}
+
 func (w *FanoutWorker) dispatchToSubscription(ctx context.Context, delivery *model.Delivery, sub *model.Subscription, attemptNumber int) bool {
+	// Use transformed payload/headers if available, otherwise originals
+	payload := delivery.Payload
+	headers := delivery.Headers
+	if delivery.TransformedPayload != nil {
+		payload = delivery.TransformedPayload
+	}
+	if delivery.TransformedHeaders != nil {
+		headers = delivery.TransformedHeaders
+	}
+	return w.dispatchToSubscriptionWithPayload(ctx, delivery, sub, attemptNumber, payload, headers)
+}
+
+func (w *FanoutWorker) dispatchToSubscriptionWithPayload(ctx context.Context, delivery *model.Delivery, sub *model.Subscription, attemptNumber int, payload, headers json.RawMessage) bool {
 	attempt, err := w.store.Deliveries.CreateAttempt(ctx, delivery.ID, sub.ID, attemptNumber)
 	if err != nil {
 		slog.Error("failed to create attempt", "error", err)
 		return false
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.TargetURL, bytes.NewReader(delivery.Payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.TargetURL, bytes.NewReader(payload))
 	if err != nil {
 		errMsg := err.Error()
 		w.store.Deliveries.UpdateAttempt(ctx, attempt.ID, model.AttemptFailed, nil, nil, &errMsg, nil)
@@ -171,8 +301,19 @@ func (w *FanoutWorker) dispatchToSubscription(ctx context.Context, delivery *mod
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Delivery-ID", delivery.ID.String())
 
+	// Apply any headers from the (potentially transformed) headers JSON
+	var headerMap map[string]string
+	if err := json.Unmarshal(headers, &headerMap); err == nil {
+		for k, v := range headerMap {
+			if k != "Content-Type" { // Don't override Content-Type
+				req.Header.Set(k, v)
+			}
+		}
+	}
+
+	// Signing uses the payload that the subscriber actually receives
 	if sub.SigningSecret != nil {
-		sig := signing.Sign(delivery.Payload, *sub.SigningSecret)
+		sig := signing.Sign(payload, *sub.SigningSecret)
 		req.Header.Set("X-Webhook-Signature-256", sig)
 	}
 
@@ -302,9 +443,6 @@ func (w *FanoutWorker) rollUpDeliveryStatus(ctx context.Context, deliveryID uuid
 			allDone = false
 			continue
 		}
-		// Check if the latest attempt succeeded
-		// For simplicity, we check if any attempt for this sub succeeded
-		// A more robust check would look at the latest attempt status
 		_ = maxAttempt
 	}
 

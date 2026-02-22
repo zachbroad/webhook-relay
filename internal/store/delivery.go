@@ -20,9 +20,9 @@ func (s *DeliveryStore) Create(ctx context.Context, sourceID uuid.UUID, idempote
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO deliveries (source_id, idempotency_key, headers, payload)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, source_id, idempotency_key, headers, payload, status, received_at`,
+		 RETURNING id, source_id, idempotency_key, headers, payload, status, received_at, transformed_payload, transformed_headers`,
 		sourceID, idempotencyKey, headers, payload,
-	).Scan(&d.ID, &d.SourceID, &d.IdempotencyKey, &d.Headers, &d.Payload, &d.Status, &d.ReceivedAt)
+	).Scan(&d.ID, &d.SourceID, &d.IdempotencyKey, &d.Headers, &d.Payload, &d.Status, &d.ReceivedAt, &d.TransformedPayload, &d.TransformedHeaders)
 	if err != nil {
 		return nil, fmt.Errorf("create delivery: %w", err)
 	}
@@ -32,10 +32,10 @@ func (s *DeliveryStore) Create(ctx context.Context, sourceID uuid.UUID, idempote
 func (s *DeliveryStore) GetByID(ctx context.Context, id uuid.UUID) (*model.Delivery, error) {
 	var d model.Delivery
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, source_id, idempotency_key, headers, payload, status, received_at
+		`SELECT id, source_id, idempotency_key, headers, payload, status, received_at, transformed_payload, transformed_headers
 		 FROM deliveries WHERE id = $1`,
 		id,
-	).Scan(&d.ID, &d.SourceID, &d.IdempotencyKey, &d.Headers, &d.Payload, &d.Status, &d.ReceivedAt)
+	).Scan(&d.ID, &d.SourceID, &d.IdempotencyKey, &d.Headers, &d.Payload, &d.Status, &d.ReceivedAt, &d.TransformedPayload, &d.TransformedHeaders)
 	if err != nil {
 		return nil, fmt.Errorf("get delivery: %w", err)
 	}
@@ -43,7 +43,7 @@ func (s *DeliveryStore) GetByID(ctx context.Context, id uuid.UUID) (*model.Deliv
 }
 
 func (s *DeliveryStore) List(ctx context.Context, sourceSlug *string, limit int) ([]model.Delivery, error) {
-	query := `SELECT d.id, d.source_id, d.idempotency_key, d.headers, d.payload, d.status, d.received_at
+	query := `SELECT d.id, d.source_id, d.idempotency_key, d.headers, d.payload, d.status, d.received_at, d.transformed_payload, d.transformed_headers
 		 FROM deliveries d`
 	args := []any{}
 	argIdx := 1
@@ -67,7 +67,7 @@ func (s *DeliveryStore) List(ctx context.Context, sourceSlug *string, limit int)
 	var deliveries []model.Delivery
 	for rows.Next() {
 		var d model.Delivery
-		if err := rows.Scan(&d.ID, &d.SourceID, &d.IdempotencyKey, &d.Headers, &d.Payload, &d.Status, &d.ReceivedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.SourceID, &d.IdempotencyKey, &d.Headers, &d.Payload, &d.Status, &d.ReceivedAt, &d.TransformedPayload, &d.TransformedHeaders); err != nil {
 			return nil, fmt.Errorf("scan delivery: %w", err)
 		}
 		deliveries = append(deliveries, d)
@@ -83,9 +83,20 @@ func (s *DeliveryStore) UpdateStatus(ctx context.Context, id uuid.UUID, status m
 	return nil
 }
 
+func (s *DeliveryStore) SetTransformed(ctx context.Context, id uuid.UUID, payload, headers json.RawMessage) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE deliveries SET transformed_payload = $2, transformed_headers = $3 WHERE id = $1`,
+		id, payload, headers,
+	)
+	if err != nil {
+		return fmt.Errorf("set transformed: %w", err)
+	}
+	return nil
+}
+
 func (s *DeliveryStore) ListPending(ctx context.Context, limit int) ([]model.Delivery, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, source_id, idempotency_key, headers, payload, status, received_at
+		`SELECT id, source_id, idempotency_key, headers, payload, status, received_at, transformed_payload, transformed_headers
 		 FROM deliveries WHERE status = 'pending' ORDER BY received_at ASC LIMIT $1`,
 		limit,
 	)
@@ -97,7 +108,7 @@ func (s *DeliveryStore) ListPending(ctx context.Context, limit int) ([]model.Del
 	var deliveries []model.Delivery
 	for rows.Next() {
 		var d model.Delivery
-		if err := rows.Scan(&d.ID, &d.SourceID, &d.IdempotencyKey, &d.Headers, &d.Payload, &d.Status, &d.ReceivedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.SourceID, &d.IdempotencyKey, &d.Headers, &d.Payload, &d.Status, &d.ReceivedAt, &d.TransformedPayload, &d.TransformedHeaders); err != nil {
 			return nil, fmt.Errorf("scan delivery: %w", err)
 		}
 		deliveries = append(deliveries, d)
@@ -148,6 +159,30 @@ func (s *DeliveryStore) ListRetryableAttempts(ctx context.Context, limit int) ([
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list retryable attempts: %w", err)
+	}
+	defer rows.Close()
+
+	var attempts []model.DeliveryAttempt
+	for rows.Next() {
+		var a model.DeliveryAttempt
+		if err := rows.Scan(&a.ID, &a.DeliveryID, &a.SubscriptionID, &a.AttemptNumber, &a.Status, &a.ResponseStatus, &a.ResponseBody, &a.ErrorMessage, &a.NextRetryAt, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan attempt: %w", err)
+		}
+		attempts = append(attempts, a)
+	}
+	return attempts, rows.Err()
+}
+
+func (s *DeliveryStore) ListAttemptsByDelivery(ctx context.Context, deliveryID uuid.UUID) ([]model.DeliveryAttempt, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, delivery_id, subscription_id, attempt_number, status, response_status, response_body, error_message, next_retry_at, created_at
+		 FROM delivery_attempts
+		 WHERE delivery_id = $1
+		 ORDER BY created_at ASC`,
+		deliveryID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list attempts by delivery: %w", err)
 	}
 	defer rows.Close()
 

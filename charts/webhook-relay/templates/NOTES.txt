@@ -1,0 +1,25 @@
+webhook-relay has been deployed!
+
+Components:
+  - API:      {{ .Values.api.replicaCount }} replica(s)
+  - Worker:   {{ .Values.worker.replicaCount }} replica(s)
+  - Postgres: 1 replica (StatefulSet)
+  - Redis:    1 replica (StatefulSet)
+
+{{- if .Values.api.ingress.enabled }}
+
+Ingress is enabled. Access the API at:
+  http{{ if .Values.api.ingress.tls }}s{{ end }}://{{ .Values.api.ingress.host }}
+
+If using minikube, add the host to /etc/hosts:
+  echo "$(minikube ip) {{ .Values.api.ingress.host }}" | sudo tee -a /etc/hosts
+{{- else }}
+
+To access the API, forward the service port:
+  kubectl port-forward svc/{{ include "webhook-relay.fullname" . }}-api 8080:80
+{{- end }}
+
+To seed a webhook source:
+  kubectl exec -it $(kubectl get pod -l "app.kubernetes.io/component=postgres,app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath='{.items[0].metadata.name}') -- \
+    psql -U {{ .Values.postgres.user }} -d {{ .Values.postgres.database }} -c \
+    "INSERT INTO sources (id, name, slug) VALUES (gen_random_uuid(), 'my-source', 'my-source') ON CONFLICT DO NOTHING;"

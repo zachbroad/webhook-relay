@@ -133,6 +133,9 @@ a:hover { text-decoration: underline; }
 .badge-pending { background: var(--yellow-bg); color: var(--yellow); }
 .badge-processing { background: var(--blue-bg); color: var(--blue); }
 .badge-failed { background: var(--red-bg); color: var(--red); }
+.badge-recorded { background: #f3e8ff; color: #7c3aed; }
+.badge-record { background: #f3e8ff; color: #7c3aed; }
+.badge-active { background: var(--green-bg); color: var(--green); }
 
 .form-inline {
   display: flex;
@@ -261,6 +264,126 @@ pre.json {
   border-radius: var(--radius);
   font-size: 0.85rem;
   margin-bottom: 1rem;
+}
+
+.success-msg {
+  background: var(--green-bg);
+  color: var(--green);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.mode-switch .btn {
+  padding: 0.35rem 0.8rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.mode-switch .btn.active-mode {
+  border-color: transparent;
+}
+
+.mode-switch .btn.active-mode.mode-record {
+  background: #f3e8ff;
+  color: #7c3aed;
+  border-color: #c4b5fd;
+}
+
+.mode-switch .btn.active-mode.mode-active {
+  background: var(--green-bg);
+  color: var(--green);
+  border-color: #86efac;
+}
+
+textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 200px;
+  outline: none;
+  tab-size: 2;
+}
+
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
+}
+
+.script-help {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+  line-height: 1.6;
+}
+
+.script-help code {
+  background: #f1f5f9;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.test-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.test-section h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.test-result {
+  margin-top: 0.75rem;
+}
+
+.test-result h4 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 0.75rem 0 0.35rem;
+}
+
+.test-result pre.json {
+  max-height: 200px;
+}
+
+.test-result .sub-list {
+  list-style: none;
+  font-size: 0.85rem;
+  padding: 0;
+}
+
+.test-result .sub-list li {
+  padding: 0.25rem 0;
+}
+
+#script-test-result {
+  min-height: 0;
+}
+
+#script-test-result .error-msg {
+  margin-top: 0.75rem;
+  margin-bottom: 0;
 }
 
 @media (max-width: 768px) {

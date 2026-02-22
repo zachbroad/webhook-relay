@@ -20,7 +20,116 @@
     <button type="submit" class="btn btn-primary btn-sm">Update</button>
   </form>
 </div>
+{{template "mode-card" .}}
+{{template "script-card" .}}
 {{template "subscriptions-card" .}}
+{{end}}
+
+{{define "mode-card"}}
+<div class="card" id="mode-card">
+  <h2>Mode</h2>
+  <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.75rem">
+    <strong>Record</strong> captures webhooks without forwarding. <strong>Active</strong> runs the transform pipeline and fans out to subscribers.
+  </p>
+  <div class="mode-switch">
+    <button class="btn btn-sm {{if eq .Source.Mode "record"}}active-mode mode-record{{end}}"
+      hx-post="/sources/{{.Source.Slug}}/mode"
+      hx-vals='{"mode":"record"}'
+      hx-target="#mode-card"
+      hx-swap="outerHTML">Record</button>
+    <button class="btn btn-sm {{if eq .Source.Mode "active"}}active-mode mode-active{{end}}"
+      hx-post="/sources/{{.Source.Slug}}/mode"
+      hx-vals='{"mode":"active"}'
+      hx-target="#mode-card"
+      hx-swap="outerHTML">Active</button>
+  </div>
+</div>
+{{end}}
+
+{{define "script-card"}}
+<div class="card" id="script-card">
+  <h2>Transform Script</h2>
+  {{if .ScriptError}}<div class="error-msg">{{.ScriptError}}</div>{{end}}
+  {{if .ScriptSuccess}}<div class="success-msg">{{.ScriptSuccess}}</div>{{end}}
+  <div class="test-section">
+    <h3>Test against recorded payload</h3>
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+      <select name="delivery_id" id="test-delivery-id" style="flex:1;min-width:200px">
+        <option value="">Select a delivery…</option>
+        {{range .Deliveries}}
+        <option value="{{.ID}}">{{shortID .ID}} — {{truncateJSON .Payload 60}} — {{formatTime .ReceivedAt}}</option>
+        {{end}}
+      </select>
+      <button type="button" class="btn btn-primary btn-sm"
+        hx-post="/sources/{{.Source.Slug}}/script/test"
+        hx-include="#script-body, #test-delivery-id"
+        hx-target="#script-test-result"
+        hx-swap="innerHTML">Test</button>
+    </div>
+  </div>
+  <div id="script-test-result"></div>
+  <form hx-post="/sources/{{.Source.Slug}}/script"
+        hx-target="#script-card"
+        hx-swap="outerHTML">
+    <textarea name="script_body" id="script-body">{{if .Source.ScriptBody}}{{derefStr .Source.ScriptBody}}{{else}}function transform(event) {
+  // event.payload       — the JSON body (object)
+  // event.headers       — captured headers (object)
+  // event.subscriptions — [{id, target_url}, ...]
+
+  // Transform the payload
+  event.payload.processed = true;
+
+  // Return null to drop the event
+  // Filter event.subscriptions to route selectively
+
+  return event;
+}{{end}}</textarea>
+    <div style="display:flex;gap:0.5rem;margin-top:0.75rem;align-items:center">
+      <button type="submit" class="btn btn-primary btn-sm">Save Script</button>
+      {{if .Source.ScriptBody}}
+      <button type="button" class="btn btn-danger btn-sm"
+        hx-post="/sources/{{.Source.Slug}}/script/clear"
+        hx-target="#script-card"
+        hx-swap="outerHTML"
+        hx-confirm="Remove the transform script?">Clear Script</button>
+      {{end}}
+    </div>
+  </form>
+  <div class="script-help">
+    Scripts run in a sandboxed JS runtime (ES5.1+). Available: <code>event.payload</code>, <code>event.headers</code>, <code>event.subscriptions</code>.
+    Return <code>null</code> to drop. Filter <code>event.subscriptions</code> to route selectively.
+    No async/await, fetch, or imports. 500ms timeout, 64KB max.
+  </div>
+</div>
+{{end}}
+
+{{define "script-test-result"}}
+{{if .Error}}
+<div class="error-msg">{{.Error}}</div>
+{{else if .Result}}
+{{if .Result.Dropped}}
+<div class="test-result">
+  <div class="badge badge-recorded" style="margin-bottom:0.5rem">Event Dropped</div>
+  <p style="font-size:0.85rem;color:var(--text-muted)">The script returned <code>null</code> — this event would be discarded.</p>
+</div>
+{{else}}
+<div class="test-result">
+  <div class="badge badge-success" style="margin-bottom:0.75rem">Transform OK</div>
+  <h4>Payload</h4>
+  <pre class="json">{{.Result.Payload | marshalJSON}}</pre>
+  <h4>Headers</h4>
+  <pre class="json">{{.Result.Headers | marshalJSON}}</pre>
+  <h4>Subscriptions ({{len .Result.Subscriptions}})</h4>
+  {{if .Result.Subscriptions}}
+  <ul class="sub-list">
+    {{range .Result.Subscriptions}}<li><code>{{.TargetURL}}</code> <span style="color:var(--text-muted);font-size:0.8rem">({{shortID .ID}})</span></li>{{end}}
+  </ul>
+  {{else}}
+  <p style="font-size:0.85rem;color:var(--text-muted)">No subscriptions in output — event would not be delivered.</p>
+  {{end}}
+</div>
+{{end}}
+{{end}}
 {{end}}
 
 {{define "subscriptions-card"}}

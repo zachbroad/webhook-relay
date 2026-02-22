@@ -12,9 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zachbroad/webhook-relay/internal/model"
+	"github.com/zachbroad/webhook-relay/internal/script"
 	"github.com/zachbroad/webhook-relay/internal/store"
 )
 
@@ -51,6 +52,31 @@ var funcMap = template.FuncMap{
 		}
 		return *p
 	},
+	"marshalJSON": func(v any) template.HTML {
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return template.HTML(template.HTMLEscapeString(fmt.Sprintf("%v", v)))
+		}
+		return template.HTML(template.HTMLEscapeString(string(b)))
+	},
+	"truncateJSON": func(data json.RawMessage, maxLen int) string {
+		if data == nil {
+			return "(empty)"
+		}
+		var out bytes.Buffer
+		if err := json.Compact(&out, data); err != nil {
+			s := string(data)
+			if len(s) > maxLen {
+				return s[:maxLen] + "…"
+			}
+			return s
+		}
+		s := out.String()
+		if len(s) > maxLen {
+			return s[:maxLen] + "…"
+		}
+		return s
+	},
 }
 
 type Handler struct {
@@ -74,16 +100,16 @@ func NewHandler(s *store.Store) *Handler {
 	return h
 }
 
-func (h *Handler) render(w http.ResponseWriter, page string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.templates[page].ExecuteTemplate(w, "layout", data); err != nil {
+func (h *Handler) render(c *gin.Context, page string, data any) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates[page].ExecuteTemplate(c.Writer, "layout", data); err != nil {
 		slog.Error("template render error", "page", page, "error", err)
 	}
 }
 
-func (h *Handler) renderFragment(w http.ResponseWriter, page string, fragment string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.templates[page].ExecuteTemplate(w, fragment, data); err != nil {
+func (h *Handler) renderFragment(c *gin.Context, page string, fragment string, data any) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates[page].ExecuteTemplate(c.Writer, fragment, data); err != nil {
 		slog.Error("template render error", "page", page, "fragment", fragment, "error", err)
 	}
 }
@@ -100,8 +126,16 @@ type sourceData struct {
 	Nav           string
 	Source        *model.Source
 	Subscriptions []model.Subscription
+	Deliveries    []model.Delivery
 	WebhookURL    string
 	Error         string
+	ScriptError   string
+	ScriptSuccess string
+}
+
+type scriptTestData struct {
+	Result *script.TransformResult
+	Error  string
 }
 
 type deliveriesData struct {
@@ -119,59 +153,61 @@ type deliveryData struct {
 
 // Page handlers
 
-func (h *Handler) Sources(w http.ResponseWriter, r *http.Request) {
-	sources, err := h.store.Sources.List(r.Context())
+func (h *Handler) Sources(c *gin.Context) {
+	sources, err := h.store.Sources.List(c.Request.Context())
 	if err != nil {
 		slog.Error("failed to list sources", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Internal server error")
 		return
 	}
-	h.render(w, "sources", sourcesData{
+	h.render(c, "sources", sourcesData{
 		Nav:     "sources",
 		Sources: sources,
 	})
 }
 
-func (h *Handler) SourceDetail(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
-	source, err := h.store.Sources.GetBySlug(r.Context(), slug)
+func (h *Handler) SourceDetail(c *gin.Context) {
+	slug := c.Param("slug")
+	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
 	if err != nil {
-		http.Error(w, "Source not found", http.StatusNotFound)
+		c.String(http.StatusNotFound, "Source not found")
 		return
 	}
-	subs, err := h.store.Subscriptions.List(r.Context(), source.ID)
+	subs, err := h.store.Subscriptions.List(c.Request.Context(), source.ID)
 	if err != nil {
 		slog.Error("failed to list subscriptions", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Internal server error")
 		return
 	}
-	h.render(w, "source", sourceData{
+	deliveries, _ := h.store.Deliveries.List(c.Request.Context(), &slug, 10)
+	h.render(c, "source", sourceData{
 		Nav:           "sources",
 		Source:        source,
 		Subscriptions: subs,
-		WebhookURL:    webhookURL(r, source.Slug),
+		Deliveries:    deliveries,
+		WebhookURL:    webhookURL(c, source.Slug),
 	})
 }
 
-func (h *Handler) Deliveries(w http.ResponseWriter, r *http.Request) {
-	sources, err := h.store.Sources.List(r.Context())
+func (h *Handler) Deliveries(c *gin.Context) {
+	sources, err := h.store.Sources.List(c.Request.Context())
 	if err != nil {
 		slog.Error("failed to list sources", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Internal server error")
 		return
 	}
-	sourceFilter := r.URL.Query().Get("source")
+	sourceFilter := c.Query("source")
 	var sourceSlug *string
 	if sourceFilter != "" {
 		sourceSlug = &sourceFilter
 	}
-	deliveries, err := h.store.Deliveries.List(r.Context(), sourceSlug, 50)
+	deliveries, err := h.store.Deliveries.List(c.Request.Context(), sourceSlug, 50)
 	if err != nil {
 		slog.Error("failed to list deliveries", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Internal server error")
 		return
 	}
-	h.render(w, "deliveries", deliveriesData{
+	h.render(c, "deliveries", deliveriesData{
 		Nav:          "deliveries",
 		Sources:      sources,
 		Deliveries:   deliveries,
@@ -179,24 +215,24 @@ func (h *Handler) Deliveries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) DeliveryDetail(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+func (h *Handler) DeliveryDetail(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "Invalid delivery ID", http.StatusBadRequest)
+		c.String(http.StatusBadRequest, "Invalid delivery ID")
 		return
 	}
-	delivery, err := h.store.Deliveries.GetByID(r.Context(), id)
+	delivery, err := h.store.Deliveries.GetByID(c.Request.Context(), id)
 	if err != nil {
-		http.Error(w, "Delivery not found", http.StatusNotFound)
+		c.String(http.StatusNotFound, "Delivery not found")
 		return
 	}
-	attempts, err := h.store.Deliveries.ListAttemptsByDelivery(r.Context(), id)
+	attempts, err := h.store.Deliveries.ListAttemptsByDelivery(c.Request.Context(), id)
 	if err != nil {
 		slog.Error("failed to list attempts", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Internal server error")
 		return
 	}
-	h.render(w, "delivery", deliveryData{
+	h.render(c, "delivery", deliveryData{
 		Nav:      "deliveries",
 		Delivery: delivery,
 		Attempts: attempts,
@@ -217,19 +253,19 @@ func generateSlug(name string) string {
 	return s
 }
 
-func webhookURL(r *http.Request, slug string) string {
+func webhookURL(c *gin.Context, slug string) string {
 	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s/webhooks/%s", scheme, r.Host, slug)
+	return fmt.Sprintf("%s://%s/webhooks/%s", scheme, c.Request.Host, slug)
 }
 
-func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimSpace(r.FormValue("name"))
+func (h *Handler) CreateSource(c *gin.Context) {
+	name := strings.TrimSpace(c.PostForm("name"))
 	if name == "" {
-		sources, _ := h.store.Sources.List(r.Context())
-		h.render(w, "sources", sourcesData{
+		sources, _ := h.store.Sources.List(c.Request.Context())
+		h.render(c, "sources", sourcesData{
 			Nav:     "sources",
 			Sources: sources,
 			Error:   "Name is required",
@@ -238,117 +274,283 @@ func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := generateSlug(name)
 	if slug == "" {
-		sources, _ := h.store.Sources.List(r.Context())
-		h.render(w, "sources", sourcesData{
+		sources, _ := h.store.Sources.List(c.Request.Context())
+		h.render(c, "sources", sourcesData{
 			Nav:     "sources",
 			Sources: sources,
 			Error:   "Could not generate slug from name",
 		})
 		return
 	}
-	_, err := h.store.Sources.Create(r.Context(), name, slug)
+	_, err := h.store.Sources.Create(c.Request.Context(), name, slug, "record", nil)
 	if err != nil {
-		sources, _ := h.store.Sources.List(r.Context())
+		sources, _ := h.store.Sources.List(c.Request.Context())
 		errMsg := "Failed to create source"
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
 			errMsg = "Source with this slug already exists"
 		}
-		h.render(w, "sources", sourcesData{
+		h.render(c, "sources", sourcesData{
 			Nav:     "sources",
 			Sources: sources,
 			Error:   errMsg,
 		})
 		return
 	}
-	http.Redirect(w, r, "/sources/"+slug, http.StatusSeeOther)
+	c.Redirect(http.StatusSeeOther, "/sources/"+slug)
 }
 
-func (h *Handler) UpdateSource(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
-	name := strings.TrimSpace(r.FormValue("name"))
+func (h *Handler) UpdateSource(c *gin.Context) {
+	slug := c.Param("slug")
+	name := strings.TrimSpace(c.PostForm("name"))
 	if name != "" {
-		if _, err := h.store.Sources.Update(r.Context(), slug, &name); err != nil {
+		if _, err := h.store.Sources.Update(c.Request.Context(), slug, &name, nil, nil, false); err != nil {
 			slog.Error("failed to update source", "error", err)
 		}
 	}
-	http.Redirect(w, r, "/sources/"+slug, http.StatusSeeOther)
+	c.Redirect(http.StatusSeeOther, "/sources/"+slug)
 }
 
-func (h *Handler) DeleteSource(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
-	if err := h.store.Sources.Delete(r.Context(), slug); err != nil {
+func (h *Handler) DeleteSource(c *gin.Context) {
+	slug := c.Param("slug")
+	if err := h.store.Sources.Delete(c.Request.Context(), slug); err != nil {
 		slog.Error("failed to delete source", "error", err)
-		http.Error(w, "Failed to delete source", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Failed to delete source")
 		return
 	}
-	w.Header().Set("HX-Redirect", "/sources")
-	w.WriteHeader(http.StatusOK)
+	c.Header("HX-Redirect", "/sources")
+	c.Status(http.StatusOK)
 }
 
-func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
-	source, err := h.store.Sources.GetBySlug(r.Context(), slug)
-	if err != nil {
-		http.Error(w, "Source not found", http.StatusNotFound)
+func (h *Handler) UpdateSourceMode(c *gin.Context) {
+	slug := c.Param("slug")
+	mode := c.PostForm("mode")
+	if mode != "record" && mode != "active" {
+		c.String(http.StatusBadRequest, "Invalid mode")
 		return
 	}
-	targetURL := strings.TrimSpace(r.FormValue("target_url"))
+	source, err := h.store.Sources.Update(c.Request.Context(), slug, nil, &mode, nil, false)
+	if err != nil {
+		slog.Error("failed to update source mode", "error", err)
+		c.String(http.StatusInternalServerError, "Failed to update mode")
+		return
+	}
+	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "mode-card", sourceData{
+		Source:        source,
+		Subscriptions: subs,
+	})
+}
+
+func (h *Handler) UpdateSourceScript(c *gin.Context) {
+	slug := c.Param("slug")
+	scriptBody := c.PostForm("script_body")
+
+	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
+	if err != nil {
+		c.String(http.StatusNotFound, "Source not found")
+		return
+	}
+
+	var scriptError, scriptSuccess string
+	if strings.TrimSpace(scriptBody) == "" {
+		// Clear the script
+		source, err = h.store.Sources.Update(c.Request.Context(), slug, nil, nil, nil, true)
+		if err != nil {
+			slog.Error("failed to clear script", "error", err)
+			scriptError = "Failed to clear script"
+		} else {
+			scriptSuccess = "Script cleared"
+		}
+	} else {
+		// Validate the script first
+		if err := script.Validate(scriptBody); err != nil {
+			scriptError = "Invalid script: " + err.Error()
+		} else {
+			source, err = h.store.Sources.Update(c.Request.Context(), slug, nil, nil, &scriptBody, false)
+			if err != nil {
+				slog.Error("failed to save script", "error", err)
+				scriptError = "Failed to save script"
+			} else {
+				scriptSuccess = "Script saved"
+			}
+		}
+	}
+
+	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	deliveries, _ := h.store.Deliveries.List(c.Request.Context(), &slug, 10)
+	h.renderFragment(c, "source", "script-card", sourceData{
+		Source:        source,
+		Subscriptions: subs,
+		Deliveries:    deliveries,
+		ScriptError:   scriptError,
+		ScriptSuccess: scriptSuccess,
+	})
+}
+
+func (h *Handler) ClearSourceScript(c *gin.Context) {
+	slug := c.Param("slug")
+	source, err := h.store.Sources.Update(c.Request.Context(), slug, nil, nil, nil, true)
+	if err != nil {
+		slog.Error("failed to clear script", "error", err)
+		c.String(http.StatusInternalServerError, "Failed to clear script")
+		return
+	}
+	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	deliveries, _ := h.store.Deliveries.List(c.Request.Context(), &slug, 10)
+	h.renderFragment(c, "source", "script-card", sourceData{
+		Source:        source,
+		Subscriptions: subs,
+		Deliveries:    deliveries,
+		ScriptSuccess: "Script cleared",
+	})
+}
+
+func (h *Handler) CreateSubscription(c *gin.Context) {
+	slug := c.Param("slug")
+	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
+	if err != nil {
+		c.String(http.StatusNotFound, "Source not found")
+		return
+	}
+	targetURL := strings.TrimSpace(c.PostForm("target_url"))
 	if targetURL != "" {
 		var signingSecret *string
-		if s := strings.TrimSpace(r.FormValue("signing_secret")); s != "" {
+		if s := strings.TrimSpace(c.PostForm("signing_secret")); s != "" {
 			signingSecret = &s
 		}
-		if _, err := h.store.Subscriptions.Create(r.Context(), source.ID, targetURL, signingSecret); err != nil {
+		if _, err := h.store.Subscriptions.Create(c.Request.Context(), source.ID, targetURL, signingSecret); err != nil {
 			slog.Error("failed to create subscription", "error", err)
 		}
 	}
-	subs, _ := h.store.Subscriptions.List(r.Context(), source.ID)
-	h.renderFragment(w, "source", "subscriptions-card", sourceData{
+	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "subscriptions-card", sourceData{
 		Source:        source,
 		Subscriptions: subs,
 	})
 }
 
-func (h *Handler) ToggleSubscription(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+func (h *Handler) ToggleSubscription(c *gin.Context) {
+	slug := c.Param("slug")
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "Invalid subscription ID", http.StatusBadRequest)
+		c.String(http.StatusBadRequest, "Invalid subscription ID")
 		return
 	}
-	source, err := h.store.Sources.GetBySlug(r.Context(), slug)
+	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
 	if err != nil {
-		http.Error(w, "Source not found", http.StatusNotFound)
+		c.String(http.StatusNotFound, "Source not found")
 		return
 	}
-	isActive := r.FormValue("is_active") == "on"
-	if _, err := h.store.Subscriptions.Update(r.Context(), id, nil, nil, &isActive); err != nil {
+	isActive := c.PostForm("is_active") == "on"
+	if _, err := h.store.Subscriptions.Update(c.Request.Context(), id, nil, nil, &isActive); err != nil {
 		slog.Error("failed to toggle subscription", "error", err)
 	}
-	subs, _ := h.store.Subscriptions.List(r.Context(), source.ID)
-	h.renderFragment(w, "source", "subscriptions-card", sourceData{
+	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "subscriptions-card", sourceData{
 		Source:        source,
 		Subscriptions: subs,
 	})
 }
 
-func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		http.Error(w, "Invalid subscription ID", http.StatusBadRequest)
+func (h *Handler) TestSourceScript(c *gin.Context) {
+	slug := c.Param("slug")
+	scriptBody := c.PostForm("script_body")
+	deliveryID := c.PostForm("delivery_id")
+
+	if strings.TrimSpace(deliveryID) == "" {
+		h.renderFragment(c, "source", "script-test-result", scriptTestData{
+			Error: "Select a payload to test against",
+		})
 		return
 	}
-	source, err := h.store.Sources.GetBySlug(r.Context(), slug)
+
+	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
 	if err != nil {
-		http.Error(w, "Source not found", http.StatusNotFound)
+		h.renderFragment(c, "source", "script-test-result", scriptTestData{
+			Error: "Source not found",
+		})
 		return
 	}
-	if err := h.store.Subscriptions.Delete(r.Context(), id); err != nil {
+
+	did, err := uuid.Parse(deliveryID)
+	if err != nil {
+		h.renderFragment(c, "source", "script-test-result", scriptTestData{
+			Error: "Invalid delivery ID",
+		})
+		return
+	}
+
+	delivery, err := h.store.Deliveries.GetByID(c.Request.Context(), did)
+	if err != nil || delivery.SourceID != source.ID {
+		h.renderFragment(c, "source", "script-test-result", scriptTestData{
+			Error: "Delivery not found for this source",
+		})
+		return
+	}
+
+	if strings.TrimSpace(scriptBody) == "" {
+		h.renderFragment(c, "source", "script-test-result", scriptTestData{
+			Error: "Script body is empty",
+		})
+		return
+	}
+
+	// Build transform input
+	var payload map[string]any
+	if delivery.Payload != nil {
+		if err := json.Unmarshal(delivery.Payload, &payload); err != nil {
+			payload = map[string]any{"_raw": string(delivery.Payload)}
+		}
+	}
+	var headers map[string]string
+	if delivery.Headers != nil {
+		if err := json.Unmarshal(delivery.Headers, &headers); err != nil {
+			headers = map[string]string{}
+		}
+	}
+
+	subs, _ := h.store.Subscriptions.ListActiveBySource(c.Request.Context(), source.ID)
+	subRefs := make([]script.SubscriptionRef, len(subs))
+	for i, s := range subs {
+		subRefs[i] = script.SubscriptionRef{ID: s.ID, TargetURL: s.TargetURL}
+	}
+
+	input := script.TransformInput{
+		Payload:       payload,
+		Headers:       headers,
+		Subscriptions: subRefs,
+	}
+
+	result, err := script.Run(scriptBody, input)
+	if err != nil {
+		h.renderFragment(c, "source", "script-test-result", scriptTestData{
+			Error: err.Error(),
+		})
+		return
+	}
+
+	h.renderFragment(c, "source", "script-test-result", scriptTestData{
+		Result: result,
+	})
+}
+
+func (h *Handler) DeleteSubscription(c *gin.Context) {
+	slug := c.Param("slug")
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid subscription ID")
+		return
+	}
+	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
+	if err != nil {
+		c.String(http.StatusNotFound, "Source not found")
+		return
+	}
+	if err := h.store.Subscriptions.Delete(c.Request.Context(), id); err != nil {
 		slog.Error("failed to delete subscription", "error", err)
 	}
-	subs, _ := h.store.Subscriptions.List(r.Context(), source.ID)
-	h.renderFragment(w, "source", "subscriptions-card", sourceData{
+	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "subscriptions-card", sourceData{
 		Source:        source,
 		Subscriptions: subs,
 	})

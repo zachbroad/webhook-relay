@@ -1,10 +1,9 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zachbroad/webhook-relay/internal/store"
 )
@@ -28,109 +27,104 @@ type updateSubscriptionRequest struct {
 	IsActive      *bool   `json:"is_active,omitempty"`
 }
 
-func (h *SubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
-	sourceSlug := chi.URLParam(r, "sourceSlug")
+func (h *SubscriptionHandler) Create(c *gin.Context) {
+	sourceSlug := c.Param("sourceSlug")
 
-	src, err := h.store.Sources.GetBySlug(r.Context(), sourceSlug)
+	src, err := h.store.Sources.GetBySlug(c.Request.Context(), sourceSlug)
 	if err != nil {
-		http.Error(w, "source not found", http.StatusNotFound)
+		c.String(http.StatusNotFound, "source not found")
 		return
 	}
 
 	var req createSubscriptionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.String(http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.TargetURL == "" {
-		http.Error(w, "target_url is required", http.StatusBadRequest)
+		c.String(http.StatusBadRequest, "target_url is required")
 		return
 	}
 
-	sub, err := h.store.Subscriptions.Create(r.Context(), src.ID, req.TargetURL, req.SigningSecret)
+	sub, err := h.store.Subscriptions.Create(c.Request.Context(), src.ID, req.TargetURL, req.SigningSecret)
 	if err != nil {
-		http.Error(w, "failed to create subscription", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "failed to create subscription")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(sub)
+	c.JSON(http.StatusCreated, sub)
 }
 
-func (h *SubscriptionHandler) List(w http.ResponseWriter, r *http.Request) {
-	sourceSlug := chi.URLParam(r, "sourceSlug")
+func (h *SubscriptionHandler) List(c *gin.Context) {
+	sourceSlug := c.Param("sourceSlug")
 
-	src, err := h.store.Sources.GetBySlug(r.Context(), sourceSlug)
+	src, err := h.store.Sources.GetBySlug(c.Request.Context(), sourceSlug)
 	if err != nil {
-		http.Error(w, "source not found", http.StatusNotFound)
+		c.String(http.StatusNotFound, "source not found")
 		return
 	}
 
-	subs, err := h.store.Subscriptions.List(r.Context(), src.ID)
+	subs, err := h.store.Subscriptions.List(c.Request.Context(), src.ID)
 	if err != nil {
-		http.Error(w, "failed to list subscriptions", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "failed to list subscriptions")
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	if subs == nil {
-		w.Write([]byte("[]"))
+		c.Data(http.StatusOK, "application/json", []byte("[]"))
 		return
 	}
-	json.NewEncoder(w).Encode(subs)
+	c.JSON(http.StatusOK, subs)
 }
 
-func (h *SubscriptionHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+func (h *SubscriptionHandler) Get(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid subscription id", http.StatusBadRequest)
+		c.String(http.StatusBadRequest, "invalid subscription id")
 		return
 	}
 
-	sub, err := h.store.Subscriptions.GetByID(r.Context(), id)
+	sub, err := h.store.Subscriptions.GetByID(c.Request.Context(), id)
 	if err != nil {
-		http.Error(w, "subscription not found", http.StatusNotFound)
+		c.String(http.StatusNotFound, "subscription not found")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sub)
+	c.JSON(http.StatusOK, sub)
 }
 
-func (h *SubscriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+func (h *SubscriptionHandler) Update(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid subscription id", http.StatusBadRequest)
+		c.String(http.StatusBadRequest, "invalid subscription id")
 		return
 	}
 
 	var req updateSubscriptionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.String(http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	sub, err := h.store.Subscriptions.Update(r.Context(), id, req.TargetURL, req.SigningSecret, req.IsActive)
+	sub, err := h.store.Subscriptions.Update(c.Request.Context(), id, req.TargetURL, req.SigningSecret, req.IsActive)
 	if err != nil {
-		http.Error(w, "failed to update subscription", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "failed to update subscription")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sub)
+	c.JSON(http.StatusOK, sub)
 }
 
-func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+func (h *SubscriptionHandler) Delete(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid subscription id", http.StatusBadRequest)
+		c.String(http.StatusBadRequest, "invalid subscription id")
 		return
 	}
 
-	if err := h.store.Subscriptions.Delete(r.Context(), id); err != nil {
-		http.Error(w, "failed to delete subscription", http.StatusInternalServerError)
+	if err := h.store.Subscriptions.Delete(c.Request.Context(), id); err != nil {
+		c.String(http.StatusInternalServerError, "failed to delete subscription")
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
