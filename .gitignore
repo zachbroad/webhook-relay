@@ -34,6 +34,14 @@ go.work.sum
 # Air
 /tmp/
 
+# Terraform
+*.tfvars
+backend.conf
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
 # OS
 .DS_Store
 Thumbs.db
