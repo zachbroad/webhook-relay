@@ -19,27 +19,28 @@ var (
 	ErrScriptTooLarge = errors.New("script exceeds 64KB limit")
 	ErrScriptTimeout  = errors.New("script execution timed out")
 	ErrNoTransform    = errors.New("script must define a 'transform' function")
+	ErrNoProcess      = errors.New("script must define a 'process' function")
 )
 
-// SubscriptionRef is a lightweight subscription reference passed into/out of scripts.
-type SubscriptionRef struct {
+// ActionRef is a lightweight action reference passed into/out of scripts.
+type ActionRef struct {
 	ID        uuid.UUID `json:"id"`
 	TargetURL string    `json:"target_url"`
 }
 
 // TransformInput is the data passed to the transform function.
 type TransformInput struct {
-	Payload       map[string]any    `json:"payload"`
-	Headers       map[string]string `json:"headers"`
-	Subscriptions []SubscriptionRef `json:"subscriptions"`
+	Payload map[string]any    `json:"payload"`
+	Headers map[string]string `json:"headers"`
+	Actions []ActionRef       `json:"actions"`
 }
 
 // TransformResult is the output of the transform function.
 type TransformResult struct {
-	Payload       map[string]any    `json:"payload"`
-	Headers       map[string]string `json:"headers"`
-	Subscriptions []SubscriptionRef `json:"subscriptions"`
-	Dropped       bool              `json:"dropped"`
+	Payload map[string]any    `json:"payload"`
+	Headers map[string]string `json:"headers"`
+	Actions []ActionRef       `json:"actions"`
+	Dropped bool              `json:"dropped"`
 }
 
 // Validate checks that the script compiles and exports a 'transform' function.
@@ -114,14 +115,14 @@ func Run(scriptBody string, input TransformInput) (result *TransformResult, err 
 		"payload": input.Payload,
 		"headers": input.Headers,
 	}
-	subsForJS := make([]map[string]any, len(input.Subscriptions))
-	for i, s := range input.Subscriptions {
-		subsForJS[i] = map[string]any{
-			"id":         s.ID.String(),
-			"target_url": s.TargetURL,
+	actionsForJS := make([]map[string]any, len(input.Actions))
+	for i, a := range input.Actions {
+		actionsForJS[i] = map[string]any{
+			"id":         a.ID.String(),
+			"target_url": a.TargetURL,
 		}
 	}
-	eventObj["subscriptions"] = subsForJS
+	eventObj["actions"] = actionsForJS
 
 	arg := vm.ToValue(eventObj)
 	ret, err := callable(goja.Undefined(), arg)
@@ -147,12 +148,12 @@ func Run(scriptBody string, input TransformInput) (result *TransformResult, err 
 	}
 
 	var raw struct {
-		Payload       map[string]any         `json:"payload"`
-		Headers       map[string]interface{} `json:"headers"`
-		Subscriptions []struct {
+		Payload map[string]any         `json:"payload"`
+		Headers map[string]interface{} `json:"headers"`
+		Actions []struct {
 			ID        string `json:"id"`
 			TargetURL string `json:"target_url"`
-		} `json:"subscriptions"`
+		} `json:"actions"`
 	}
 	if err := json.Unmarshal(jsonBytes, &raw); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal script result: %w", err)
@@ -164,19 +165,111 @@ func Run(scriptBody string, input TransformInput) (result *TransformResult, err 
 		headers[k] = fmt.Sprintf("%v", v)
 	}
 
-	// Convert subscriptions
-	subs := make([]SubscriptionRef, 0, len(raw.Subscriptions))
-	for _, s := range raw.Subscriptions {
-		id, err := uuid.Parse(s.ID)
+	// Convert actions
+	actions := make([]ActionRef, 0, len(raw.Actions))
+	for _, a := range raw.Actions {
+		id, err := uuid.Parse(a.ID)
 		if err != nil {
-			continue // skip invalid subscription IDs
+			continue // skip invalid action IDs
 		}
-		subs = append(subs, SubscriptionRef{ID: id, TargetURL: s.TargetURL})
+		actions = append(actions, ActionRef{ID: id, TargetURL: a.TargetURL})
 	}
 
 	return &TransformResult{
-		Payload:       raw.Payload,
-		Headers:       headers,
-		Subscriptions: subs,
+		Payload: raw.Payload,
+		Headers: headers,
+		Actions: actions,
 	}, nil
+}
+
+// ValidateAction checks that the script compiles and exports a 'process' function.
+func ValidateAction(scriptBody string) error {
+	if len(scriptBody) > maxScriptSize {
+		return ErrScriptTooLarge
+	}
+
+	vm := goja.New()
+	_, err := vm.RunString(scriptBody)
+	if err != nil {
+		return fmt.Errorf("script compilation error: %w", err)
+	}
+
+	fn := vm.Get("process")
+	if fn == nil || fn == goja.Undefined() || fn == goja.Null() {
+		return ErrNoProcess
+	}
+	if _, ok := goja.AssertFunction(fn); !ok {
+		return ErrNoProcess
+	}
+
+	return nil
+}
+
+// RunAction executes a per-action JS script's process(event) function.
+// Returns the result as a JSON string.
+func RunAction(scriptBody string, payload map[string]any, headers map[string]string) (result string, err error) {
+	if len(scriptBody) > maxScriptSize {
+		return "", ErrScriptTooLarge
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(*goja.InterruptedError); ok {
+				result = ""
+				err = ErrScriptTimeout
+			} else {
+				result = ""
+				err = fmt.Errorf("script panic: %v", r)
+			}
+		}
+	}()
+
+	vm := goja.New()
+
+	timer := time.AfterFunc(execTimeout, func() {
+		vm.Interrupt("timeout")
+	})
+	defer timer.Stop()
+
+	_, err = vm.RunString(scriptBody)
+	if err != nil {
+		return "", fmt.Errorf("script compilation error: %w", err)
+	}
+
+	processFn := vm.Get("process")
+	if processFn == nil || processFn == goja.Undefined() || processFn == goja.Null() {
+		return "", ErrNoProcess
+	}
+
+	callable, ok := goja.AssertFunction(processFn)
+	if !ok {
+		return "", ErrNoProcess
+	}
+
+	eventObj := map[string]any{
+		"payload": payload,
+		"headers": headers,
+	}
+
+	arg := vm.ToValue(eventObj)
+	ret, err := callable(goja.Undefined(), arg)
+	if err != nil {
+		var interrupted *goja.InterruptedError
+		if errors.As(err, &interrupted) {
+			return "", ErrScriptTimeout
+		}
+		return "", fmt.Errorf("script execution error: %w", err)
+	}
+
+	if ret == nil || ret == goja.Undefined() || ret == goja.Null() {
+		return "null", nil
+	}
+
+	exported := ret.Export()
+	jsonBytes, err := json.Marshal(exported)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal action script result: %w", err)
+	}
+
+	return string(jsonBytes), nil
 }

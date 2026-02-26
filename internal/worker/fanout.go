@@ -145,13 +145,13 @@ func (w *FanoutWorker) processDelivery(ctx context.Context, deliveryID uuid.UUID
 		return
 	}
 
-	subs, err := w.store.Subscriptions.ListActiveBySource(ctx, delivery.SourceID)
+	actions, err := w.store.Actions.ListActiveBySource(ctx, delivery.SourceID)
 	if err != nil {
-		slog.Error("failed to list subscriptions", "error", err, "delivery_id", deliveryID)
+		slog.Error("failed to list actions", "error", err, "delivery_id", deliveryID)
 		return
 	}
 
-	if len(subs) == 0 {
+	if len(actions) == 0 {
 		w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryCompleted)
 		return
 	}
@@ -159,11 +159,11 @@ func (w *FanoutWorker) processDelivery(ctx context.Context, deliveryID uuid.UUID
 	// Determine payload and headers to use for dispatch
 	payload := delivery.Payload
 	headers := delivery.Headers
-	activeSubs := subs
+	activeActions := actions
 
 	// Run transform script if source has one
 	if src.ScriptBody != nil && *src.ScriptBody != "" {
-		transformResult, err := w.runTransform(*src.ScriptBody, delivery, subs)
+		transformResult, err := w.runTransform(*src.ScriptBody, delivery, actions)
 		if err != nil {
 			slog.Error("script execution failed", "error", err, "delivery_id", deliveryID)
 			w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryFailed)
@@ -198,24 +198,30 @@ func (w *FanoutWorker) processDelivery(ctx context.Context, deliveryID uuid.UUID
 		payload = transformedPayload
 		headers = transformedHeaders
 
-		// Filter subscriptions to only those the script kept
-		if len(transformResult.Subscriptions) > 0 {
-			activeSubs = filterSubscriptions(subs, transformResult.Subscriptions)
+		// Filter actions to only those the script kept
+		if len(transformResult.Actions) > 0 {
+			activeActions = filterActions(actions, transformResult.Actions)
 		} else {
-			// Script filtered all subscriptions out
+			// Script filtered all actions out
 			w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryCompleted)
 			return
 		}
 	}
 
-	if len(activeSubs) == 0 {
+	if len(activeActions) == 0 {
 		w.store.Deliveries.UpdateStatus(ctx, deliveryID, model.DeliveryCompleted)
 		return
 	}
 
 	allSuccess := true
-	for _, sub := range activeSubs {
-		success := w.dispatchToSubscriptionWithPayload(ctx, delivery, &sub, 1, payload, headers)
+	for _, action := range activeActions {
+		var success bool
+		switch action.Type {
+		case model.ActionTypeJavascript:
+			success = w.dispatchJavascriptAction(ctx, delivery, &action, 1, payload, headers)
+		default:
+			success = w.dispatchWebhookAction(ctx, delivery, &action, 1, payload, headers)
+		}
 		if !success {
 			allSuccess = false
 		}
@@ -227,7 +233,7 @@ func (w *FanoutWorker) processDelivery(ctx context.Context, deliveryID uuid.UUID
 }
 
 // runTransform executes the source's JS transform script against the delivery.
-func (w *FanoutWorker) runTransform(scriptBody string, delivery *model.Delivery, subs []model.Subscription) (*script.TransformResult, error) {
+func (w *FanoutWorker) runTransform(scriptBody string, delivery *model.Delivery, actions []model.Action) (*script.TransformResult, error) {
 	// Parse payload into a map
 	var payloadMap map[string]any
 	if err := json.Unmarshal(delivery.Payload, &payloadMap); err != nil {
@@ -240,38 +246,42 @@ func (w *FanoutWorker) runTransform(scriptBody string, delivery *model.Delivery,
 		return nil, fmt.Errorf("unmarshal headers: %w", err)
 	}
 
-	// Build subscription refs
-	subRefs := make([]script.SubscriptionRef, len(subs))
-	for i, s := range subs {
-		subRefs[i] = script.SubscriptionRef{ID: s.ID, TargetURL: s.TargetURL}
+	// Build action refs
+	actionRefs := make([]script.ActionRef, len(actions))
+	for i, a := range actions {
+		targetURL := ""
+		if a.TargetURL != nil {
+			targetURL = *a.TargetURL
+		}
+		actionRefs[i] = script.ActionRef{ID: a.ID, TargetURL: targetURL}
 	}
 
 	input := script.TransformInput{
-		Payload:       payloadMap,
-		Headers:       headersMap,
-		Subscriptions: subRefs,
+		Payload: payloadMap,
+		Headers: headersMap,
+		Actions: actionRefs,
 	}
 
 	return script.Run(scriptBody, input)
 }
 
-// filterSubscriptions returns only the subscriptions whose IDs appear in the script result.
-func filterSubscriptions(all []model.Subscription, kept []script.SubscriptionRef) []model.Subscription {
+// filterActions returns only the actions whose IDs appear in the script result.
+func filterActions(all []model.Action, kept []script.ActionRef) []model.Action {
 	keptIDs := make(map[uuid.UUID]bool, len(kept))
-	for _, s := range kept {
-		keptIDs[s.ID] = true
+	for _, a := range kept {
+		keptIDs[a.ID] = true
 	}
 
-	var filtered []model.Subscription
-	for _, s := range all {
-		if keptIDs[s.ID] {
-			filtered = append(filtered, s)
+	var filtered []model.Action
+	for _, a := range all {
+		if keptIDs[a.ID] {
+			filtered = append(filtered, a)
 		}
 	}
 	return filtered
 }
 
-func (w *FanoutWorker) dispatchToSubscription(ctx context.Context, delivery *model.Delivery, sub *model.Subscription, attemptNumber int) bool {
+func (w *FanoutWorker) dispatchToAction(ctx context.Context, delivery *model.Delivery, action *model.Action, attemptNumber int) bool {
 	// Use transformed payload/headers if available, otherwise originals
 	payload := delivery.Payload
 	headers := delivery.Headers
@@ -281,17 +291,27 @@ func (w *FanoutWorker) dispatchToSubscription(ctx context.Context, delivery *mod
 	if delivery.TransformedHeaders != nil {
 		headers = delivery.TransformedHeaders
 	}
-	return w.dispatchToSubscriptionWithPayload(ctx, delivery, sub, attemptNumber, payload, headers)
+	switch action.Type {
+	case model.ActionTypeJavascript:
+		return w.dispatchJavascriptAction(ctx, delivery, action, attemptNumber, payload, headers)
+	default:
+		return w.dispatchWebhookAction(ctx, delivery, action, attemptNumber, payload, headers)
+	}
 }
 
-func (w *FanoutWorker) dispatchToSubscriptionWithPayload(ctx context.Context, delivery *model.Delivery, sub *model.Subscription, attemptNumber int, payload, headers json.RawMessage) bool {
-	attempt, err := w.store.Deliveries.CreateAttempt(ctx, delivery.ID, sub.ID, attemptNumber)
+func (w *FanoutWorker) dispatchWebhookAction(ctx context.Context, delivery *model.Delivery, action *model.Action, attemptNumber int, payload, headers json.RawMessage) bool {
+	attempt, err := w.store.Deliveries.CreateAttempt(ctx, delivery.ID, action.ID, attemptNumber)
 	if err != nil {
 		slog.Error("failed to create attempt", "error", err)
 		return false
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.TargetURL, bytes.NewReader(payload))
+	targetURL := ""
+	if action.TargetURL != nil {
+		targetURL = *action.TargetURL
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(payload))
 	if err != nil {
 		errMsg := err.Error()
 		w.store.Deliveries.UpdateAttempt(ctx, attempt.ID, model.AttemptFailed, nil, nil, &errMsg, nil)
@@ -312,8 +332,8 @@ func (w *FanoutWorker) dispatchToSubscriptionWithPayload(ctx context.Context, de
 	}
 
 	// Signing uses the payload that the subscriber actually receives
-	if sub.SigningSecret != nil {
-		sig := signing.Sign(payload, *sub.SigningSecret)
+	if action.SigningSecret != nil {
+		sig := signing.Sign(payload, *action.SigningSecret)
 		req.Header.Set("X-Webhook-Signature-256", sig)
 	}
 
@@ -339,6 +359,45 @@ func (w *FanoutWorker) dispatchToSubscriptionWithPayload(ctx context.Context, de
 	nextRetry := w.nextRetryTime(attemptNumber)
 	w.store.Deliveries.UpdateAttempt(ctx, attempt.ID, model.AttemptFailed, &statusCode, &bodyStr, &errMsg, nextRetry)
 	return false
+}
+
+func (w *FanoutWorker) dispatchJavascriptAction(ctx context.Context, delivery *model.Delivery, action *model.Action, attemptNumber int, payload, headers json.RawMessage) bool {
+	attempt, err := w.store.Deliveries.CreateAttempt(ctx, delivery.ID, action.ID, attemptNumber)
+	if err != nil {
+		slog.Error("failed to create attempt", "error", err)
+		return false
+	}
+
+	if action.ScriptBody == nil || *action.ScriptBody == "" {
+		errMsg := "javascript action has no script_body"
+		w.store.Deliveries.UpdateAttempt(ctx, attempt.ID, model.AttemptFailed, nil, nil, &errMsg, nil)
+		return false
+	}
+
+	var payloadMap map[string]any
+	if err := json.Unmarshal(payload, &payloadMap); err != nil {
+		errMsg := fmt.Sprintf("failed to unmarshal payload: %v", err)
+		w.store.Deliveries.UpdateAttempt(ctx, attempt.ID, model.AttemptFailed, nil, nil, &errMsg, nil)
+		return false
+	}
+
+	var headersMap map[string]string
+	if err := json.Unmarshal(headers, &headersMap); err != nil {
+		errMsg := fmt.Sprintf("failed to unmarshal headers: %v", err)
+		w.store.Deliveries.UpdateAttempt(ctx, attempt.ID, model.AttemptFailed, nil, nil, &errMsg, nil)
+		return false
+	}
+
+	result, err := script.RunAction(*action.ScriptBody, payloadMap, headersMap)
+	if err != nil {
+		errMsg := err.Error()
+		nextRetry := w.nextRetryTime(attemptNumber)
+		w.store.Deliveries.UpdateAttempt(ctx, attempt.ID, model.AttemptFailed, nil, nil, &errMsg, nextRetry)
+		return false
+	}
+
+	w.store.Deliveries.UpdateAttempt(ctx, attempt.ID, model.AttemptSuccess, nil, &result, nil, nil)
+	return true
 }
 
 func (w *FanoutWorker) nextRetryTime(attemptNumber int) *time.Time {
@@ -405,19 +464,19 @@ func (w *FanoutWorker) retryAttempt(ctx context.Context, prev *model.DeliveryAtt
 		return
 	}
 
-	sub, err := w.store.Subscriptions.GetByID(ctx, prev.SubscriptionID)
+	action, err := w.store.Actions.GetByID(ctx, prev.ActionID)
 	if err != nil {
-		slog.Error("retry: failed to get subscription", "error", err)
+		slog.Error("retry: failed to get action", "error", err)
 		return
 	}
 
 	nextAttempt := prev.AttemptNumber + 1
-	success := w.dispatchToSubscription(ctx, delivery, sub, nextAttempt)
+	success := w.dispatchToAction(ctx, delivery, action, nextAttempt)
 
 	// Clear the retry marker on the old attempt so it's not picked up again
 	w.store.Deliveries.UpdateAttempt(ctx, prev.ID, model.AttemptFailed, prev.ResponseStatus, prev.ResponseBody, prev.ErrorMessage, nil)
 
-	// Roll up delivery status if this was the last subscription or all succeeded
+	// Roll up delivery status if this was the last action or all succeeded
 	if success {
 		w.rollUpDeliveryStatus(ctx, delivery.ID)
 	} else if nextAttempt >= w.maxRetries {
@@ -431,14 +490,14 @@ func (w *FanoutWorker) rollUpDeliveryStatus(ctx context.Context, deliveryID uuid
 		return
 	}
 
-	subs, err := w.store.Subscriptions.ListActiveBySource(ctx, delivery.SourceID)
+	actions, err := w.store.Actions.ListActiveBySource(ctx, delivery.SourceID)
 	if err != nil {
 		return
 	}
 
 	allDone := true
-	for _, sub := range subs {
-		maxAttempt, err := w.store.Deliveries.GetMaxAttemptNumber(ctx, deliveryID, sub.ID)
+	for _, action := range actions {
+		maxAttempt, err := w.store.Deliveries.GetMaxAttemptNumber(ctx, deliveryID, action.ID)
 		if err != nil || maxAttempt == 0 {
 			allDone = false
 			continue

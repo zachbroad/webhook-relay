@@ -118,6 +118,7 @@ td {
 
 tr:nth-child(even) { background: #f8fafc; }
 tr:hover { background: #f1f5f9; }
+tr.action-row:hover { background: #e8f0fe; }
 
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -137,6 +138,8 @@ a:hover { text-decoration: underline; }
 .badge-recorded { background: #f3e8ff; color: #7c3aed; }
 .badge-record { background: #f3e8ff; color: #7c3aed; }
 .badge-active { background: var(--green-bg); color: var(--green); }
+.badge-webhook { background: var(--blue-bg); color: var(--blue); }
+.badge-javascript { background: var(--yellow-bg); color: var(--yellow); }
 
 .form-inline {
   display: flex;
@@ -394,6 +397,20 @@ textarea:focus {
   background: #1e1e1e;
 }
 
+#action-monaco-container {
+  height: 200px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #1e1e1e;
+}
+
+#edit-action-monaco-container {
+  height: 300px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #1e1e1e;
+}
+
 @media (max-width: 768px) {
   nav { padding: 0 1rem; gap: 1rem; }
   .container { padding: 1rem; }
@@ -418,8 +435,14 @@ textarea:focus {
 
 <script>
 (function() {
-  var editor = null;
+  var editors = {};
   var monacoReady = false;
+
+  var editorConfigs = [
+    { container: 'monaco-container', textarea: 'script-body', cards: ['script-card', 'main-content'] },
+    { container: 'action-monaco-container', textarea: 'action-script-body', cards: ['actions-card', 'main-content'] },
+    { container: 'edit-action-monaco-container', textarea: 'edit-action-script-body', cards: ['actions-card', 'main-content'] }
+  ];
 
   require.config({
     paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs' }
@@ -427,17 +450,17 @@ textarea:focus {
 
   require(['vs/editor/editor.main'], function() {
     monacoReady = true;
-    initEditor();
+    initAllEditors();
   });
 
-  function initEditor() {
+  function initEditorFor(cfg) {
     if (!monacoReady) return;
-    var container = document.getElementById('monaco-container');
-    var textarea = document.getElementById('script-body');
+    var container = document.getElementById(cfg.container);
+    var textarea = document.getElementById(cfg.textarea);
     if (!container || !textarea) return;
-    if (editor) return;
+    if (editors[cfg.container]) return;
 
-    editor = monaco.editor.create(container, {
+    var ed = monaco.editor.create(container, {
       value: textarea.value,
       language: 'javascript',
       theme: 'vs-dark',
@@ -449,31 +472,85 @@ textarea:focus {
       tabSize: 2
     });
 
-    editor.onDidChangeModelContent(function() {
-      textarea.value = editor.getValue();
+    ed.onDidChangeModelContent(function() {
+      textarea.value = ed.getValue();
     });
+
+    editors[cfg.container] = ed;
   }
 
-  function disposeEditor() {
-    if (editor) {
-      editor.dispose();
-      editor = null;
+  function disposeEditorFor(cfg) {
+    if (editors[cfg.container]) {
+      editors[cfg.container].dispose();
+      delete editors[cfg.container];
     }
+  }
+
+  function initAllEditors() {
+    editorConfigs.forEach(initEditorFor);
+  }
+
+  function disposeAllEditors() {
+    editorConfigs.forEach(disposeEditorFor);
   }
 
   document.body.addEventListener('htmx:beforeSwap', function(evt) {
     var target = evt.detail.target;
     if (!target) return;
-    if (target.id === 'script-card' || target.id === 'main-content') {
-      disposeEditor();
-    }
+    editorConfigs.forEach(function(cfg) {
+      for (var i = 0; i < cfg.cards.length; i++) {
+        if (target.id === cfg.cards[i]) {
+          disposeEditorFor(cfg);
+          break;
+        }
+      }
+    });
   });
 
   document.body.addEventListener('htmx:afterSettle', function(evt) {
     var target = evt.detail.target;
     if (!target) return;
-    if (target.id === 'script-card' || target.id === 'main-content') {
-      initEditor();
+    editorConfigs.forEach(function(cfg) {
+      for (var i = 0; i < cfg.cards.length; i++) {
+        if (target.id === cfg.cards[i]) {
+          initEditorFor(cfg);
+          break;
+        }
+      }
+    });
+  });
+
+  // Handle visibility toggle for action editor
+  var origOnchange;
+  function setupTypeToggle() {
+    var sel = document.getElementById('action-type-select');
+    if (!sel) return;
+    sel.addEventListener('change', function() {
+      setTimeout(function() {
+        var actionCfg = editorConfigs[1];
+        if (sel.value === 'javascript') {
+          initEditorFor(actionCfg);
+        } else {
+          disposeEditorFor(actionCfg);
+        }
+      }, 50);
+    });
+  }
+
+  // Init on page load
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { initAllEditors(); setupTypeToggle(); });
+  } else {
+    initAllEditors();
+    setupTypeToggle();
+  }
+
+  // Re-setup toggle after htmx swaps the actions card
+  document.body.addEventListener('htmx:afterSettle', function(evt) {
+    var target = evt.detail.target;
+    if (!target) return;
+    if (target.id === 'actions-card' || target.id === 'main-content') {
+      setupTypeToggle();
     }
   });
 })();

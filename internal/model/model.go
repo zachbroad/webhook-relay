@@ -17,14 +17,31 @@ type Source struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-type Subscription struct {
-	ID            uuid.UUID `json:"id"`
-	SourceID      uuid.UUID `json:"source_id"`
-	TargetURL     string    `json:"target_url"`
-	SigningSecret *string   `json:"signing_secret,omitempty"`
-	IsActive      bool      `json:"is_active"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+type ActionType string
+
+const (
+	ActionTypeWebhook    ActionType = "webhook"
+	ActionTypeJavascript ActionType = "javascript"
+	// ActionTypeSMTP       ActionType = "smtp"
+	// ActionTypeDiscord    ActionType = "discord"
+	// ActionTypeSlack      ActionType = "slack"
+	// ActionTypePagerDuty   ActionType = "pagerduty"
+	// ActionTypeOpsGenie    ActionType = "opsgenie"
+	// ActionTypeS3         ActionType = "s3"
+	// ActionTypeSQS        ActionType = "sqs"
+	// ActionTypeKinesis    ActionType = "kinesis"
+)
+
+type Action struct {
+	ID            uuid.UUID  `json:"id"`
+	SourceID      uuid.UUID  `json:"source_id"`
+	Type          ActionType `json:"type"`
+	TargetURL     *string    `json:"target_url,omitempty"`
+	ScriptBody    *string    `json:"script_body,omitempty"`
+	SigningSecret *string    `json:"signing_secret,omitempty"`
+	IsActive      bool       `json:"is_active"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type DeliveryStatus string
@@ -60,7 +77,7 @@ const (
 type DeliveryAttempt struct {
 	ID             uuid.UUID     `json:"id"`
 	DeliveryID     uuid.UUID     `json:"delivery_id"`
-	SubscriptionID uuid.UUID     `json:"subscription_id"`
+	ActionID       uuid.UUID     `json:"action_id"`
 	AttemptNumber  int           `json:"attempt_number"`
 	Status         AttemptStatus `json:"status"`
 	ResponseStatus *int          `json:"response_status,omitempty"`

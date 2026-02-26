@@ -16,7 +16,9 @@
     </select>
   </div>
 </div>
-<div class="card">
+<div class="card" hx-get="/deliveries{{if .SourceFilter}}?source={{.SourceFilter}}{{end}}"
+     hx-trigger="every 1s" hx-select=".card table, .card .empty" hx-swap="innerHTML"
+     hx-disinherit="hx-select hx-swap hx-trigger">
   {{if .Deliveries}}
   <table>
     <thead><tr><th>ID</th><th>Status</th><th>Idempotency Key</th><th>Received</th></tr></thead>

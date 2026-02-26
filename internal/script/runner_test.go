@@ -49,9 +49,9 @@ func TestRun_BasicTransform(t *testing.T) {
 	}`
 
 	input := TransformInput{
-		Payload:       map[string]any{"type": "push"},
-		Headers:       map[string]string{"Content-Type": "application/json"},
-		Subscriptions: []SubscriptionRef{{ID: uuid.New(), TargetURL: "https://example.com"}},
+		Payload: map[string]any{"type": "push"},
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Actions: []ActionRef{{ID: uuid.New(), TargetURL: "https://example.com"}},
 	}
 
 	result, err := Run(script, input)
@@ -73,9 +73,9 @@ func TestRun_Drop(t *testing.T) {
 	script := `function transform(event) { return null; }`
 
 	input := TransformInput{
-		Payload:       map[string]any{"type": "ping"},
-		Headers:       map[string]string{},
-		Subscriptions: []SubscriptionRef{},
+		Payload: map[string]any{"type": "ping"},
+		Headers: map[string]string{},
+		Actions: []ActionRef{},
 	}
 
 	result, err := Run(script, input)
@@ -94,9 +94,9 @@ func TestRun_HeaderModification(t *testing.T) {
 	}`
 
 	input := TransformInput{
-		Payload:       map[string]any{},
-		Headers:       map[string]string{"Content-Type": "application/json"},
-		Subscriptions: []SubscriptionRef{},
+		Payload: map[string]any{},
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Actions: []ActionRef{},
 	}
 
 	result, err := Run(script, input)
@@ -111,32 +111,32 @@ func TestRun_HeaderModification(t *testing.T) {
 	}
 }
 
-func TestRun_SubscriptionFiltering(t *testing.T) {
-	sub1 := SubscriptionRef{ID: uuid.New(), TargetURL: "https://production.example.com/hook"}
-	sub2 := SubscriptionRef{ID: uuid.New(), TargetURL: "https://staging.example.com/hook"}
+func TestRun_ActionFiltering(t *testing.T) {
+	action1 := ActionRef{ID: uuid.New(), TargetURL: "https://production.example.com/hook"}
+	action2 := ActionRef{ID: uuid.New(), TargetURL: "https://staging.example.com/hook"}
 
 	script := `function transform(event) {
-		event.subscriptions = event.subscriptions.filter(function(s) {
-			return s.target_url.indexOf("production") !== -1;
+		event.actions = event.actions.filter(function(a) {
+			return a.target_url.indexOf("production") !== -1;
 		});
 		return event;
 	}`
 
 	input := TransformInput{
-		Payload:       map[string]any{},
-		Headers:       map[string]string{},
-		Subscriptions: []SubscriptionRef{sub1, sub2},
+		Payload: map[string]any{},
+		Headers: map[string]string{},
+		Actions: []ActionRef{action1, action2},
 	}
 
 	result, err := Run(script, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result.Subscriptions) != 1 {
-		t.Fatalf("expected 1 subscription, got: %d", len(result.Subscriptions))
+	if len(result.Actions) != 1 {
+		t.Fatalf("expected 1 action, got: %d", len(result.Actions))
 	}
-	if result.Subscriptions[0].ID != sub1.ID {
-		t.Fatalf("expected production sub, got: %v", result.Subscriptions[0])
+	if result.Actions[0].ID != action1.ID {
+		t.Fatalf("expected production action, got: %v", result.Actions[0])
 	}
 }
 
@@ -144,9 +144,9 @@ func TestRun_Timeout(t *testing.T) {
 	script := `function transform(event) { while(true) {} return event; }`
 
 	input := TransformInput{
-		Payload:       map[string]any{},
-		Headers:       map[string]string{},
-		Subscriptions: []SubscriptionRef{},
+		Payload: map[string]any{},
+		Headers: map[string]string{},
+		Actions: []ActionRef{},
 	}
 
 	_, err := Run(script, input)
@@ -159,9 +159,9 @@ func TestRun_SyntaxError(t *testing.T) {
 	script := `function transform(event { return event; }`
 
 	input := TransformInput{
-		Payload:       map[string]any{},
-		Headers:       map[string]string{},
-		Subscriptions: []SubscriptionRef{},
+		Payload: map[string]any{},
+		Headers: map[string]string{},
+		Actions: []ActionRef{},
 	}
 
 	_, err := Run(script, input)
@@ -179,9 +179,9 @@ func TestRun_ConditionalDrop(t *testing.T) {
 
 	// Test drop case
 	input := TransformInput{
-		Payload:       map[string]any{"type": "ping"},
-		Headers:       map[string]string{},
-		Subscriptions: []SubscriptionRef{},
+		Payload: map[string]any{"type": "ping"},
+		Headers: map[string]string{},
+		Actions: []ActionRef{},
 	}
 	result, err := Run(script, input)
 	if err != nil {
@@ -202,5 +202,75 @@ func TestRun_ConditionalDrop(t *testing.T) {
 	}
 	if result.Payload["processed_at"] != "2024-01-01" {
 		t.Fatalf("expected processed_at, got: %v", result.Payload)
+	}
+}
+
+// Tests for action scripts (RunAction / ValidateAction)
+
+func TestValidateAction_Valid(t *testing.T) {
+	err := ValidateAction(`function process(event) { return {result: true}; }`)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateAction_MissingProcess(t *testing.T) {
+	err := ValidateAction(`function transform(event) { return event; }`)
+	if err != ErrNoProcess {
+		t.Fatalf("expected ErrNoProcess, got: %v", err)
+	}
+}
+
+func TestValidateAction_SyntaxError(t *testing.T) {
+	err := ValidateAction(`function process(event { return event; }`)
+	if err == nil {
+		t.Fatal("expected error for syntax error")
+	}
+}
+
+func TestRunAction_Basic(t *testing.T) {
+	scriptBody := `function process(event) {
+		return {processed: true, type: event.payload.type};
+	}`
+
+	result, err := RunAction(scriptBody, map[string]any{"type": "push"}, map[string]string{"Content-Type": "application/json"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == "" {
+		t.Fatal("expected non-empty result")
+	}
+	if result == "null" {
+		t.Fatal("expected non-null result")
+	}
+}
+
+func TestRunAction_ReturnsNull(t *testing.T) {
+	scriptBody := `function process(event) { return null; }`
+
+	result, err := RunAction(scriptBody, map[string]any{}, map[string]string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "null" {
+		t.Fatalf("expected 'null', got: %v", result)
+	}
+}
+
+func TestRunAction_Timeout(t *testing.T) {
+	scriptBody := `function process(event) { while(true) {} }`
+
+	_, err := RunAction(scriptBody, map[string]any{}, map[string]string{})
+	if err != ErrScriptTimeout {
+		t.Fatalf("expected ErrScriptTimeout, got: %v", err)
+	}
+}
+
+func TestRunAction_MissingProcess(t *testing.T) {
+	scriptBody := `function transform(event) { return event; }`
+
+	_, err := RunAction(scriptBody, map[string]any{}, map[string]string{})
+	if err != ErrNoProcess {
+		t.Fatalf("expected ErrNoProcess, got: %v", err)
 	}
 }

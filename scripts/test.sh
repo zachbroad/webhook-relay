@@ -30,18 +30,18 @@ psql "$DB_URL" -qc "
 "
 ok "Source ready"
 
-# ─── Create a subscription ──────────────────────────────────────
-step "Creating subscription → https://httpbin.org/post"
-SUB_RESPONSE=$(curl -sf -X POST "$BASE_URL/sources/$SOURCE_SLUG/subscriptions" \
+# ─── Create an action ──────────────────────────────────────────
+step "Creating action → https://httpbin.org/post"
+ACTION_RESPONSE=$(curl -sf -X POST "$BASE_URL/sources/$SOURCE_SLUG/actions" \
   -H "Content-Type: application/json" \
-  -d '{"target_url": "https://httpbin.org/post"}')
-echo "$SUB_RESPONSE" | jq .
-SUB_ID=$(echo "$SUB_RESPONSE" | jq -r '.id')
-ok "Subscription created: $SUB_ID"
+  -d '{"type": "webhook", "target_url": "https://httpbin.org/post"}')
+echo "$ACTION_RESPONSE" | jq .
+ACTION_ID=$(echo "$ACTION_RESPONSE" | jq -r '.id')
+ok "Action created: $ACTION_ID"
 
-# ─── List subscriptions ─────────────────────────────────────────
-step "Listing subscriptions for '$SOURCE_SLUG'"
-curl -sf "$BASE_URL/sources/$SOURCE_SLUG/subscriptions" | jq .
+# ─── List actions ─────────────────────────────────────────────
+step "Listing actions for '$SOURCE_SLUG'"
+curl -sf "$BASE_URL/sources/$SOURCE_SLUG/actions" | jq .
 
 # ─── Send a webhook ─────────────────────────────────────────────
 step "Sending webhook to '$SOURCE_SLUG'"
@@ -60,9 +60,9 @@ sleep 3
 step "Listing recent deliveries"
 curl -sf "$BASE_URL/deliveries?source=$SOURCE_SLUG&limit=5" | jq .
 
-# ─── Cleanup: delete subscription ───────────────────────────────
-step "Cleaning up: deleting subscription $SUB_ID"
-curl -sf -X DELETE "$BASE_URL/sources/$SOURCE_SLUG/subscriptions/$SUB_ID"
-ok "Subscription deleted"
+# ─── Cleanup: delete action ───────────────────────────────────
+step "Cleaning up: deleting action $ACTION_ID"
+curl -sf -X DELETE "$BASE_URL/sources/$SOURCE_SLUG/actions/$ACTION_ID"
+ok "Action deleted"
 
 echo -e "\n${GREEN}All done!${NC}"

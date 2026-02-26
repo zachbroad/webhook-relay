@@ -125,12 +125,15 @@ type sourcesData struct {
 type sourceData struct {
 	Nav           string
 	Source        *model.Source
-	Subscriptions []model.Subscription
+	Actions       []model.Action
 	Deliveries    []model.Delivery
 	WebhookURL    string
 	Error         string
 	ScriptError   string
 	ScriptSuccess string
+	EditAction    *model.Action
+	ActionError   string
+	ActionSuccess string
 }
 
 type scriptTestData struct {
@@ -173,19 +176,19 @@ func (h *Handler) SourceDetail(c *gin.Context) {
 		c.String(http.StatusNotFound, "Source not found")
 		return
 	}
-	subs, err := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	actions, err := h.store.Actions.List(c.Request.Context(), source.ID)
 	if err != nil {
-		slog.Error("failed to list subscriptions", "error", err)
+		slog.Error("failed to list actions", "error", err)
 		c.String(http.StatusInternalServerError, "Internal server error")
 		return
 	}
 	deliveries, _ := h.store.Deliveries.List(c.Request.Context(), &slug, 10)
 	h.render(c, "source", sourceData{
-		Nav:           "sources",
-		Source:        source,
-		Subscriptions: subs,
-		Deliveries:    deliveries,
-		WebhookURL:    webhookURL(c, source.Slug),
+		Nav:        "sources",
+		Source:     source,
+		Actions:    actions,
+		Deliveries: deliveries,
+		WebhookURL: webhookURL(c, source.Slug),
 	})
 }
 
@@ -334,10 +337,10 @@ func (h *Handler) UpdateSourceMode(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "Failed to update mode")
 		return
 	}
-	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
 	h.renderFragment(c, "source", "mode-card", sourceData{
-		Source:        source,
-		Subscriptions: subs,
+		Source:  source,
+		Actions: actions,
 	})
 }
 
@@ -376,11 +379,11 @@ func (h *Handler) UpdateSourceScript(c *gin.Context) {
 		}
 	}
 
-	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
 	deliveries, _ := h.store.Deliveries.List(c.Request.Context(), &slug, 10)
 	h.renderFragment(c, "source", "script-card", sourceData{
 		Source:        source,
-		Subscriptions: subs,
+		Actions:       actions,
 		Deliveries:    deliveries,
 		ScriptError:   scriptError,
 		ScriptSuccess: scriptSuccess,
@@ -395,45 +398,66 @@ func (h *Handler) ClearSourceScript(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "Failed to clear script")
 		return
 	}
-	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
+	actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
 	deliveries, _ := h.store.Deliveries.List(c.Request.Context(), &slug, 10)
 	h.renderFragment(c, "source", "script-card", sourceData{
 		Source:        source,
-		Subscriptions: subs,
+		Actions:       actions,
 		Deliveries:    deliveries,
 		ScriptSuccess: "Script cleared",
 	})
 }
 
-func (h *Handler) CreateSubscription(c *gin.Context) {
+func (h *Handler) CreateAction(c *gin.Context) {
 	slug := c.Param("slug")
 	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
 	if err != nil {
 		c.String(http.StatusNotFound, "Source not found")
 		return
 	}
-	targetURL := strings.TrimSpace(c.PostForm("target_url"))
-	if targetURL != "" {
-		var signingSecret *string
-		if s := strings.TrimSpace(c.PostForm("signing_secret")); s != "" {
-			signingSecret = &s
+
+	actionType := model.ActionType(c.PostForm("type"))
+	if actionType == "" {
+		actionType = model.ActionTypeWebhook
+	}
+
+	switch actionType {
+	case model.ActionTypeWebhook:
+		targetURL := strings.TrimSpace(c.PostForm("target_url"))
+		if targetURL != "" {
+			var signingSecret *string
+			if s := strings.TrimSpace(c.PostForm("signing_secret")); s != "" {
+				signingSecret = &s
+			}
+			if _, err := h.store.Actions.Create(c.Request.Context(), source.ID, actionType, &targetURL, signingSecret, nil); err != nil {
+				slog.Error("failed to create action", "error", err)
+			}
 		}
-		if _, err := h.store.Subscriptions.Create(c.Request.Context(), source.ID, targetURL, signingSecret); err != nil {
-			slog.Error("failed to create subscription", "error", err)
+	case model.ActionTypeJavascript:
+		scriptBody := strings.TrimSpace(c.PostForm("script_body"))
+		if scriptBody != "" {
+			if err := script.ValidateAction(scriptBody); err != nil {
+				slog.Error("invalid action script", "error", err)
+			} else {
+				if _, err := h.store.Actions.Create(c.Request.Context(), source.ID, actionType, nil, nil, &scriptBody); err != nil {
+					slog.Error("failed to create action", "error", err)
+				}
+			}
 		}
 	}
-	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
-	h.renderFragment(c, "source", "subscriptions-card", sourceData{
-		Source:        source,
-		Subscriptions: subs,
+
+	actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "actions-card", sourceData{
+		Source:  source,
+		Actions: actions,
 	})
 }
 
-func (h *Handler) ToggleSubscription(c *gin.Context) {
+func (h *Handler) ToggleAction(c *gin.Context) {
 	slug := c.Param("slug")
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.String(http.StatusBadRequest, "Invalid subscription ID")
+		c.String(http.StatusBadRequest, "Invalid action ID")
 		return
 	}
 	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
@@ -442,13 +466,13 @@ func (h *Handler) ToggleSubscription(c *gin.Context) {
 		return
 	}
 	isActive := c.PostForm("is_active") == "on"
-	if _, err := h.store.Subscriptions.Update(c.Request.Context(), id, nil, nil, &isActive); err != nil {
-		slog.Error("failed to toggle subscription", "error", err)
+	if _, err := h.store.Actions.Update(c.Request.Context(), id, nil, nil, &isActive, nil); err != nil {
+		slog.Error("failed to toggle action", "error", err)
 	}
-	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
-	h.renderFragment(c, "source", "subscriptions-card", sourceData{
-		Source:        source,
-		Subscriptions: subs,
+	actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "actions-card", sourceData{
+		Source:  source,
+		Actions: actions,
 	})
 }
 
@@ -509,16 +533,20 @@ func (h *Handler) TestSourceScript(c *gin.Context) {
 		}
 	}
 
-	subs, _ := h.store.Subscriptions.ListActiveBySource(c.Request.Context(), source.ID)
-	subRefs := make([]script.SubscriptionRef, len(subs))
-	for i, s := range subs {
-		subRefs[i] = script.SubscriptionRef{ID: s.ID, TargetURL: s.TargetURL}
+	actions, _ := h.store.Actions.ListActiveBySource(c.Request.Context(), source.ID)
+	actionRefs := make([]script.ActionRef, len(actions))
+	for i, a := range actions {
+		targetURL := ""
+		if a.TargetURL != nil {
+			targetURL = *a.TargetURL
+		}
+		actionRefs[i] = script.ActionRef{ID: a.ID, TargetURL: targetURL}
 	}
 
 	input := script.TransformInput{
-		Payload:       payload,
-		Headers:       headers,
-		Subscriptions: subRefs,
+		Payload: payload,
+		Headers: headers,
+		Actions: actionRefs,
 	}
 
 	result, err := script.Run(scriptBody, input)
@@ -534,11 +562,43 @@ func (h *Handler) TestSourceScript(c *gin.Context) {
 	})
 }
 
-func (h *Handler) DeleteSubscription(c *gin.Context) {
+func (h *Handler) EditAction(c *gin.Context) {
+	slug := c.Param("slug")
+
+	// Get the action ID from the URL
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid action ID")
+		return
+	}
+
+	// Get the source
+	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
+	if err != nil {
+		c.String(http.StatusNotFound, "Source not found")
+		return
+	}
+
+	// Get the action
+	action, err := h.store.Actions.GetByID(c.Request.Context(), id)
+	if err != nil {
+		c.String(http.StatusNotFound, "Action not found")
+		return
+	}
+
+	actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "action-edit-card", sourceData{
+		Source:     source,
+		Actions:    actions,
+		EditAction: action,
+	})
+}
+
+func (h *Handler) UpdateAction(c *gin.Context) {
 	slug := c.Param("slug")
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.String(http.StatusBadRequest, "Invalid subscription ID")
+		c.String(http.StatusBadRequest, "Invalid action ID")
 		return
 	}
 	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
@@ -546,12 +606,81 @@ func (h *Handler) DeleteSubscription(c *gin.Context) {
 		c.String(http.StatusNotFound, "Source not found")
 		return
 	}
-	if err := h.store.Subscriptions.Delete(c.Request.Context(), id); err != nil {
-		slog.Error("failed to delete subscription", "error", err)
+	action, err := h.store.Actions.GetByID(c.Request.Context(), id)
+	if err != nil {
+		c.String(http.StatusNotFound, "Action not found")
+		return
 	}
-	subs, _ := h.store.Subscriptions.List(c.Request.Context(), source.ID)
-	h.renderFragment(c, "source", "subscriptions-card", sourceData{
+
+	var actionError string
+	switch action.Type {
+	case model.ActionTypeWebhook:
+		targetURL := strings.TrimSpace(c.PostForm("target_url"))
+		if targetURL == "" {
+			actionError = "Target URL is required for webhook actions"
+		} else {
+			var signingSecret *string
+			if s := strings.TrimSpace(c.PostForm("signing_secret")); s != "" {
+				signingSecret = &s
+			}
+			if _, err := h.store.Actions.Update(c.Request.Context(), id, &targetURL, signingSecret, nil, nil); err != nil {
+				slog.Error("failed to update action", "error", err)
+				actionError = "Failed to update action"
+			}
+		}
+	case model.ActionTypeJavascript:
+		scriptBody := strings.TrimSpace(c.PostForm("script_body"))
+		if scriptBody == "" {
+			actionError = "Script body is required for javascript actions"
+		} else if err := script.ValidateAction(scriptBody); err != nil {
+			actionError = "Invalid script: " + err.Error()
+		} else {
+			if _, err := h.store.Actions.Update(c.Request.Context(), id, nil, nil, nil, &scriptBody); err != nil {
+				slog.Error("failed to update action", "error", err)
+				actionError = "Failed to update action"
+			}
+		}
+	}
+
+	if actionError != "" {
+		// Re-fetch action for edit form
+		action, _ = h.store.Actions.GetByID(c.Request.Context(), id)
+		actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
+		h.renderFragment(c, "source", "action-edit-card", sourceData{
+			Source:      source,
+			Actions:     actions,
+			EditAction:  action,
+			ActionError: actionError,
+		})
+		return
+	}
+
+	actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "actions-card", sourceData{
 		Source:        source,
-		Subscriptions: subs,
+		Actions:       actions,
+		ActionSuccess: "Action updated",
+	})
+}
+
+func (h *Handler) DeleteAction(c *gin.Context) {
+	slug := c.Param("slug")
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid action ID")
+		return
+	}
+	source, err := h.store.Sources.GetBySlug(c.Request.Context(), slug)
+	if err != nil {
+		c.String(http.StatusNotFound, "Source not found")
+		return
+	}
+	if err := h.store.Actions.Delete(c.Request.Context(), id); err != nil {
+		slog.Error("failed to delete action", "error", err)
+	}
+	actions, _ := h.store.Actions.List(c.Request.Context(), source.ID)
+	h.renderFragment(c, "source", "actions-card", sourceData{
+		Source:  source,
+		Actions: actions,
 	})
 }

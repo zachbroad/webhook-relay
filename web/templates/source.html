@@ -4,7 +4,7 @@
   <h1>{{.Source.Name}}</h1>
   <button class="btn btn-danger btn-sm"
     hx-delete="/sources/{{.Source.Slug}}"
-    hx-confirm="Delete this source and all its subscriptions?">Delete Source</button>
+    hx-confirm="Delete this source and all its actions?">Delete Source</button>
 </div>
 <div class="card">
   <dl class="meta-grid">
@@ -22,14 +22,14 @@
 </div>
 {{template "mode-card" .}}
 {{template "script-card" .}}
-{{template "subscriptions-card" .}}
+{{template "actions-card" .}}
 {{end}}
 
 {{define "mode-card"}}
 <div class="card" id="mode-card">
   <h2>Mode</h2>
   <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.75rem">
-    <strong>Record</strong> captures webhooks without forwarding. <strong>Active</strong> runs the transform pipeline and fans out to subscribers.
+    <strong>Record</strong> captures webhooks without forwarding. <strong>Active</strong> runs the transform pipeline and fans out to actions.
   </p>
   <div class="mode-switch">
     <button class="btn btn-sm {{if eq .Source.Mode "record"}}active-mode mode-record{{end}}"
@@ -51,6 +51,34 @@
   <h2>Transform Script</h2>
   {{if .ScriptError}}<div class="error-msg">{{.ScriptError}}</div>{{end}}
   {{if .ScriptSuccess}}<div class="success-msg">{{.ScriptSuccess}}</div>{{end}}
+  <form hx-post="/sources/{{.Source.Slug}}/script"
+        hx-target="#script-card"
+        hx-swap="outerHTML">
+    <div id="monaco-container"></div>
+    <textarea name="script_body" id="script-body" style="display:none">{{if .Source.ScriptBody}}{{derefStr .Source.ScriptBody}}{{else}}function transform(event) {
+  // event.payload  — the JSON body (object)
+  // event.headers  — captured headers (object)
+  // event.actions  — [{id, target_url}, ...]
+
+  // Transform the payload
+  event.payload.processed = true;
+
+  // Return null to drop the event
+  // Filter event.actions to route selectively
+
+  return event;
+}{{end}}</textarea>
+    <div style="display:flex;gap:0.5rem;margin-top:0.75rem;align-items:center">
+      <button type="submit" class="btn btn-primary btn-sm">Save Script</button>
+      {{if .Source.ScriptBody}}
+      <button type="button" class="btn btn-danger btn-sm"
+        hx-post="/sources/{{.Source.Slug}}/script/clear"
+        hx-target="#script-card"
+        hx-swap="outerHTML"
+        hx-confirm="Remove the transform script?">Clear Script</button>
+      {{end}}
+    </div>
+  </form>
   <div class="test-section">
     <h3>Test against recorded payload</h3>
     <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
@@ -68,37 +96,9 @@
     </div>
   </div>
   <div id="script-test-result"></div>
-  <form hx-post="/sources/{{.Source.Slug}}/script"
-        hx-target="#script-card"
-        hx-swap="outerHTML">
-    <div id="monaco-container"></div>
-    <textarea name="script_body" id="script-body" style="display:none">{{if .Source.ScriptBody}}{{derefStr .Source.ScriptBody}}{{else}}function transform(event) {
-  // event.payload       — the JSON body (object)
-  // event.headers       — captured headers (object)
-  // event.subscriptions — [{id, target_url}, ...]
-
-  // Transform the payload
-  event.payload.processed = true;
-
-  // Return null to drop the event
-  // Filter event.subscriptions to route selectively
-
-  return event;
-}{{end}}</textarea>
-    <div style="display:flex;gap:0.5rem;margin-top:0.75rem;align-items:center">
-      <button type="submit" class="btn btn-primary btn-sm">Save Script</button>
-      {{if .Source.ScriptBody}}
-      <button type="button" class="btn btn-danger btn-sm"
-        hx-post="/sources/{{.Source.Slug}}/script/clear"
-        hx-target="#script-card"
-        hx-swap="outerHTML"
-        hx-confirm="Remove the transform script?">Clear Script</button>
-      {{end}}
-    </div>
-  </form>
   <div class="script-help">
-    Scripts run in a sandboxed JS runtime (ES5.1+). Available: <code>event.payload</code>, <code>event.headers</code>, <code>event.subscriptions</code>.
-    Return <code>null</code> to drop. Filter <code>event.subscriptions</code> to route selectively.
+    Scripts run in a sandboxed JS runtime (ES5.1+). Available: <code>event.payload</code>, <code>event.headers</code>, <code>event.actions</code>.
+    Return <code>null</code> to drop. Filter <code>event.actions</code> to route selectively.
     No async/await, fetch, or imports. 500ms timeout, 64KB max.
   </div>
 </div>
@@ -120,52 +120,87 @@
   <pre class="json">{{.Result.Payload | marshalJSON}}</pre>
   <h4>Headers</h4>
   <pre class="json">{{.Result.Headers | marshalJSON}}</pre>
-  <h4>Subscriptions ({{len .Result.Subscriptions}})</h4>
-  {{if .Result.Subscriptions}}
+  <h4>Actions ({{len .Result.Actions}})</h4>
+  {{if .Result.Actions}}
   <ul class="sub-list">
-    {{range .Result.Subscriptions}}<li><code>{{.TargetURL}}</code> <span style="color:var(--text-muted);font-size:0.8rem">({{shortID .ID}})</span></li>{{end}}
+    {{range .Result.Actions}}<li><code>{{.TargetURL}}</code> <span style="color:var(--text-muted);font-size:0.8rem">({{shortID .ID}})</span></li>{{end}}
   </ul>
   {{else}}
-  <p style="font-size:0.85rem;color:var(--text-muted)">No subscriptions in output — event would not be delivered.</p>
+  <p style="font-size:0.85rem;color:var(--text-muted)">No actions in output — event would not be delivered.</p>
   {{end}}
 </div>
 {{end}}
 {{end}}
 {{end}}
 
-{{define "subscriptions-card"}}
-<div class="card" id="subscriptions-card">
-  <h2>Subscriptions</h2>
-  <form hx-post="/sources/{{.Source.Slug}}/subscriptions"
-        hx-target="#subscriptions-card"
+{{define "actions-card"}}
+<div class="card" id="actions-card">
+  <h2>Actions</h2>
+  {{if .ActionSuccess}}<div class="success-msg">{{.ActionSuccess}}</div>{{end}}
+  <form hx-post="/sources/{{.Source.Slug}}/actions"
+        hx-target="#actions-card"
         hx-swap="outerHTML"
-        class="form-inline">
-    <input type="url" name="target_url" placeholder="https://example.com/webhook" style="flex:1;min-width:250px" required>
-    <input type="text" name="signing_secret" placeholder="Signing secret (optional)" style="width:200px">
-    <button type="submit" class="btn btn-primary">Add</button>
+        class="action-form">
+    <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap">
+      <select name="type" id="action-type-select" style="width:140px"
+        onchange="(function(sel){
+          var wf=document.getElementById('webhook-fields');
+          var jf=document.getElementById('js-fields');
+          if(sel.value==='javascript'){wf.style.display='none';jf.style.display='block';wf.querySelector('input[name=target_url]').removeAttribute('required');}
+          else{wf.style.display='flex';jf.style.display='none';wf.querySelector('input[name=target_url]').setAttribute('required','');}
+        })(this)">
+        <option value="webhook">Webhook</option>
+        <option value="javascript">JavaScript</option>
+      </select>
+    </div>
+    <div id="webhook-fields" class="form-inline">
+      <input type="url" name="target_url" placeholder="https://example.com/webhook" style="flex:1;min-width:250px" required>
+      <input type="text" name="signing_secret" placeholder="Signing secret (optional)" style="width:200px">
+      <button type="submit" class="btn btn-primary">Add</button>
+    </div>
+    <div id="js-fields" style="display:none">
+      <div id="action-monaco-container"></div>
+      <textarea name="script_body" id="action-script-body" style="display:none">function process(event) {
+  // event.payload — the JSON body
+  // event.headers — captured headers
+  return { processed: true };
+}</textarea>
+      <button type="submit" class="btn btn-primary" style="margin-top:0.5rem">Add</button>
+    </div>
   </form>
-  {{if .Subscriptions}}
+  {{if .Actions}}
   <table>
-    <thead><tr><th>Target URL</th><th>Active</th><th>Created</th><th></th></tr></thead>
+    <thead><tr><th>Type</th><th>Target / Script</th><th>Active</th><th>Created</th><th></th></tr></thead>
     <tbody>
-      {{range .Subscriptions}}
-      <tr>
-        <td><code>{{.TargetURL}}</code></td>
+      {{range .Actions}}
+      <tr class="action-row"
+        hx-get="/sources/{{$.Source.Slug}}/actions/{{.ID}}/edit"
+        hx-target="#actions-card"
+        hx-swap="outerHTML"
+        style="cursor:pointer">
         <td>
+          {{if eq (printf "%s" .Type) "webhook"}}<span class="badge badge-webhook">webhook</span>
+          {{else}}<span class="badge badge-javascript">javascript</span>{{end}}
+        </td>
+        <td>
+          {{if eq (printf "%s" .Type) "webhook"}}<code>{{derefStr .TargetURL}}</code>
+          {{else}}<code>process(event)</code>{{end}}
+        </td>
+        <td onclick="event.stopPropagation()">
           <label class="toggle">
             <input type="checkbox" name="is_active" {{if .IsActive}}checked{{end}}
-              hx-post="/sources/{{$.Source.Slug}}/subscriptions/{{.ID}}/toggle"
-              hx-target="#subscriptions-card"
+              hx-post="/sources/{{$.Source.Slug}}/actions/{{.ID}}/toggle"
+              hx-target="#actions-card"
               hx-swap="outerHTML">
             <span class="slider"></span>
           </label>
         </td>
         <td>{{formatTime .CreatedAt}}</td>
-        <td>
+        <td onclick="event.stopPropagation()">
           <button class="btn btn-danger btn-sm"
-            hx-delete="/sources/{{$.Source.Slug}}/subscriptions/{{.ID}}"
-            hx-confirm="Delete this subscription?"
-            hx-target="#subscriptions-card"
+            hx-delete="/sources/{{$.Source.Slug}}/actions/{{.ID}}"
+            hx-confirm="Delete this action?"
+            hx-target="#actions-card"
             hx-swap="outerHTML">Delete</button>
         </td>
       </tr>
@@ -173,7 +208,52 @@
     </tbody>
   </table>
   {{else}}
-  <div class="empty">No subscriptions yet.</div>
+  <div class="empty">No actions yet.</div>
   {{end}}
+</div>
+{{end}}
+
+{{define "action-edit-card"}}
+<div class="card" id="actions-card">
+  <div class="header-row" style="margin-bottom:0.75rem">
+    <h2 style="margin-bottom:0">
+      Edit Action
+      {{if eq (printf "%s" .EditAction.Type) "webhook"}}<span class="badge badge-webhook">webhook</span>
+      {{else}}<span class="badge badge-javascript">javascript</span>{{end}}
+    </h2>
+    <button class="btn btn-sm"
+      hx-get="/sources/{{.Source.Slug}}"
+      hx-target="#actions-card"
+      hx-swap="outerHTML"
+      hx-select="#actions-card"
+      style="border:1px solid var(--border)">Cancel</button>
+  </div>
+  {{if .ActionError}}<div class="error-msg">{{.ActionError}}</div>{{end}}
+  <form hx-post="/sources/{{.Source.Slug}}/actions/{{.EditAction.ID}}/update"
+        hx-target="#actions-card"
+        hx-swap="outerHTML">
+    {{if eq (printf "%s" .EditAction.Type) "webhook"}}
+    <div class="form-inline" style="margin-bottom:0.75rem">
+      <label style="font-weight:600;font-size:0.85rem;min-width:90px">Target URL</label>
+      <input type="url" name="target_url" value="{{derefStr .EditAction.TargetURL}}" style="flex:1;min-width:250px" required>
+    </div>
+    <div class="form-inline" style="margin-bottom:0.75rem">
+      <label style="font-weight:600;font-size:0.85rem;min-width:90px">Signing Secret</label>
+      <input type="text" name="signing_secret" value="{{derefStr .EditAction.SigningSecret}}" placeholder="(unchanged)" style="flex:1;min-width:200px">
+    </div>
+    {{else}}
+    <div id="edit-action-monaco-container"></div>
+    <textarea name="script_body" id="edit-action-script-body" style="display:none">{{derefStr .EditAction.ScriptBody}}</textarea>
+    {{end}}
+    <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <button type="button" class="btn btn-sm"
+        hx-get="/sources/{{.Source.Slug}}"
+        hx-target="#actions-card"
+        hx-swap="outerHTML"
+        hx-select="#actions-card"
+        style="border:1px solid var(--border)">Cancel</button>
+    </div>
+  </form>
 </div>
 {{end}}

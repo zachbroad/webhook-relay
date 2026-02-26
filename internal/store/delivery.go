@@ -118,14 +118,14 @@ func (s *DeliveryStore) ListPending(ctx context.Context, limit int) ([]model.Del
 
 // Attempt operations
 
-func (s *DeliveryStore) CreateAttempt(ctx context.Context, deliveryID, subscriptionID uuid.UUID, attemptNumber int) (*model.DeliveryAttempt, error) {
+func (s *DeliveryStore) CreateAttempt(ctx context.Context, deliveryID, actionID uuid.UUID, attemptNumber int) (*model.DeliveryAttempt, error) {
 	var a model.DeliveryAttempt
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO delivery_attempts (delivery_id, subscription_id, attempt_number)
+		`INSERT INTO delivery_attempts (delivery_id, action_id, attempt_number)
 		 VALUES ($1, $2, $3)
-		 RETURNING id, delivery_id, subscription_id, attempt_number, status, response_status, response_body, error_message, next_retry_at, created_at`,
-		deliveryID, subscriptionID, attemptNumber,
-	).Scan(&a.ID, &a.DeliveryID, &a.SubscriptionID, &a.AttemptNumber, &a.Status, &a.ResponseStatus, &a.ResponseBody, &a.ErrorMessage, &a.NextRetryAt, &a.CreatedAt)
+		 RETURNING id, delivery_id, action_id, attempt_number, status, response_status, response_body, error_message, next_retry_at, created_at`,
+		deliveryID, actionID, attemptNumber,
+	).Scan(&a.ID, &a.DeliveryID, &a.ActionID, &a.AttemptNumber, &a.Status, &a.ResponseStatus, &a.ResponseBody, &a.ErrorMessage, &a.NextRetryAt, &a.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create attempt: %w", err)
 	}
@@ -151,7 +151,7 @@ func (s *DeliveryStore) UpdateAttempt(ctx context.Context, id uuid.UUID, status 
 
 func (s *DeliveryStore) ListRetryableAttempts(ctx context.Context, limit int) ([]model.DeliveryAttempt, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, delivery_id, subscription_id, attempt_number, status, response_status, response_body, error_message, next_retry_at, created_at
+		`SELECT id, delivery_id, action_id, attempt_number, status, response_status, response_body, error_message, next_retry_at, created_at
 		 FROM delivery_attempts
 		 WHERE status = 'failed' AND next_retry_at IS NOT NULL AND next_retry_at <= now()
 		 ORDER BY next_retry_at ASC LIMIT $1`,
@@ -165,7 +165,7 @@ func (s *DeliveryStore) ListRetryableAttempts(ctx context.Context, limit int) ([
 	var attempts []model.DeliveryAttempt
 	for rows.Next() {
 		var a model.DeliveryAttempt
-		if err := rows.Scan(&a.ID, &a.DeliveryID, &a.SubscriptionID, &a.AttemptNumber, &a.Status, &a.ResponseStatus, &a.ResponseBody, &a.ErrorMessage, &a.NextRetryAt, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.DeliveryID, &a.ActionID, &a.AttemptNumber, &a.Status, &a.ResponseStatus, &a.ResponseBody, &a.ErrorMessage, &a.NextRetryAt, &a.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan attempt: %w", err)
 		}
 		attempts = append(attempts, a)
@@ -175,7 +175,7 @@ func (s *DeliveryStore) ListRetryableAttempts(ctx context.Context, limit int) ([
 
 func (s *DeliveryStore) ListAttemptsByDelivery(ctx context.Context, deliveryID uuid.UUID) ([]model.DeliveryAttempt, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, delivery_id, subscription_id, attempt_number, status, response_status, response_body, error_message, next_retry_at, created_at
+		`SELECT id, delivery_id, action_id, attempt_number, status, response_status, response_body, error_message, next_retry_at, created_at
 		 FROM delivery_attempts
 		 WHERE delivery_id = $1
 		 ORDER BY created_at ASC`,
@@ -189,7 +189,7 @@ func (s *DeliveryStore) ListAttemptsByDelivery(ctx context.Context, deliveryID u
 	var attempts []model.DeliveryAttempt
 	for rows.Next() {
 		var a model.DeliveryAttempt
-		if err := rows.Scan(&a.ID, &a.DeliveryID, &a.SubscriptionID, &a.AttemptNumber, &a.Status, &a.ResponseStatus, &a.ResponseBody, &a.ErrorMessage, &a.NextRetryAt, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.DeliveryID, &a.ActionID, &a.AttemptNumber, &a.Status, &a.ResponseStatus, &a.ResponseBody, &a.ErrorMessage, &a.NextRetryAt, &a.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan attempt: %w", err)
 		}
 		attempts = append(attempts, a)
@@ -197,11 +197,11 @@ func (s *DeliveryStore) ListAttemptsByDelivery(ctx context.Context, deliveryID u
 	return attempts, rows.Err()
 }
 
-func (s *DeliveryStore) GetMaxAttemptNumber(ctx context.Context, deliveryID, subscriptionID uuid.UUID) (int, error) {
+func (s *DeliveryStore) GetMaxAttemptNumber(ctx context.Context, deliveryID, actionID uuid.UUID) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
-		`SELECT COALESCE(MAX(attempt_number), 0) FROM delivery_attempts WHERE delivery_id = $1 AND subscription_id = $2`,
-		deliveryID, subscriptionID,
+		`SELECT COALESCE(MAX(attempt_number), 0) FROM delivery_attempts WHERE delivery_id = $1 AND action_id = $2`,
+		deliveryID, actionID,
 	).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("get max attempt number: %w", err)

@@ -58,7 +58,7 @@ func main() {
 	s := store.New(pool)
 	webhookH := handler.NewWebhookHandler(s, rdb)
 	sourceH := handler.NewSourceHandler(s)
-	subscriptionH := handler.NewSubscriptionHandler(s)
+	actionH := handler.NewActionHandler(s)
 	deliveryH := handler.NewDeliveryHandler(s)
 	webH := web.NewHandler(s)
 
@@ -84,9 +84,11 @@ func main() {
 	r.POST("/sources/:slug/script", webH.UpdateSourceScript)
 	r.POST("/sources/:slug/script/clear", webH.ClearSourceScript)
 	r.POST("/sources/:slug/script/test", webH.TestSourceScript)
-	r.POST("/sources/:slug/subscriptions", webH.CreateSubscription)
-	r.POST("/sources/:slug/subscriptions/:id/toggle", webH.ToggleSubscription)
-	r.DELETE("/sources/:slug/subscriptions/:id", webH.DeleteSubscription)
+	r.POST("/sources/:slug/actions", webH.CreateAction)
+	r.GET("/sources/:slug/actions/:id/edit", webH.EditAction)
+	r.POST("/sources/:slug/actions/:id/update", webH.UpdateAction)
+	r.POST("/sources/:slug/actions/:id/toggle", webH.ToggleAction)
+	r.DELETE("/sources/:slug/actions/:id", webH.DeleteAction)
 	r.GET("/deliveries", webH.Deliveries)
 	r.GET("/deliveries/:id", webH.DeliveryDetail)
 
@@ -105,13 +107,13 @@ func main() {
 				srcGroup.GET("", sourceH.Get)
 				srcGroup.PATCH("", sourceH.Update)
 				srcGroup.DELETE("", sourceH.Delete)
-				subs := srcGroup.Group("/subscriptions")
+				actions := srcGroup.Group("/actions")
 				{
-					subs.POST("", subscriptionH.Create)
-					subs.GET("", subscriptionH.List)
-					subs.GET("/:id", subscriptionH.Get)
-					subs.PATCH("/:id", subscriptionH.Update)
-					subs.DELETE("/:id", subscriptionH.Delete)
+					actions.POST("", actionH.Create)
+					actions.GET("", actionH.List)
+					actions.GET("/:id", actionH.Get)
+					actions.PATCH("/:id", actionH.Update)
+					actions.DELETE("/:id", actionH.Delete)
 				}
 			}
 		}
@@ -123,7 +125,7 @@ func main() {
 		}
 	}
 
-	// Optionally start fan-out worker in-process
+	// Optionally start fan-out worker in-process for local development
 	if *withWorker {
 		w := worker.New(s, rdb, cfg.WorkerConcurrency, cfg.MaxRetries, cfg.RetryBaseDelay, cfg.DeliveryTimeout, cfg.PollInterval)
 		if err := w.Start(ctx); err != nil {
