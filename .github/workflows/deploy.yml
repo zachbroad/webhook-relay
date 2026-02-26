@@ -1,0 +1,114 @@
+name: Deploy to OKE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  OCIR_REGISTRY: ${{ vars.OCI_REGION }}.ocir.io
+  OCIR_REPO_PREFIX: ${{ vars.OCI_REGION }}.ocir.io/${{ vars.OCIR_NAMESPACE }}/webhook-relay
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image:
+          - name: api
+            file: Dockerfile.api
+          - name: worker
+            file: Dockerfile.worker
+          - name: migrate
+            file: Dockerfile.migrate
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to OCIR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.OCIR_REGISTRY }}
+          username: ${{ vars.OCIR_NAMESPACE }}/${{ vars.OCI_USERNAME }}
+          password: ${{ secrets.OCI_AUTH_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.file }}
+          push: true
+          platforms: linux/arm64
+          tags: |
+            ${{ env.OCIR_REPO_PREFIX }}-${{ matrix.image.name }}:${{ github.sha }}
+            ${{ env.OCIR_REPO_PREFIX }}-${{ matrix.image.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure OCI CLI
+        uses: oracle-actions/configure-oci-credentials@v1
+        with:
+          user: ${{ secrets.OCI_USER_OCID }}
+          fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          tenancy: ${{ secrets.OCI_TENANCY_OCID }}
+          region: ${{ vars.OCI_REGION }}
+          private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          oci ce cluster create-kubeconfig \
+            --cluster-id ${{ secrets.OKE_CLUSTER_OCID }} \
+            --file $HOME/.kube/config \
+            --region ${{ vars.OCI_REGION }} \
+            --token-version 2.0.0 \
+            --kube-endpoint PUBLIC_ENDPOINT
+          chmod 600 $HOME/.kube/config
+
+      - name: Create OCIR pull secret
+        run: |
+          kubectl create namespace webhook-relay --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry ocir-secret \
+            --namespace webhook-relay \
+            --docker-server=${{ env.OCIR_REGISTRY }} \
+            --docker-username="${{ vars.OCIR_NAMESPACE }}/${{ vars.OCI_USERNAME }}" \
+            --docker-password="${{ secrets.OCI_AUTH_TOKEN }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy Helm chart
+        run: |
+          helm upgrade --install webhook-relay ./charts/webhook-relay \
+            --namespace webhook-relay \
+            --create-namespace \
+            --set image.api.repository=${{ env.OCIR_REPO_PREFIX }}-api \
+            --set image.api.tag=${{ github.sha }} \
+            --set image.worker.repository=${{ env.OCIR_REPO_PREFIX }}-worker \
+            --set image.worker.tag=${{ github.sha }} \
+            --set image.migrate.repository=${{ env.OCIR_REPO_PREFIX }}-migrate \
+            --set image.migrate.tag=${{ github.sha }} \
+            --set "imagePullSecrets[0].name=ocir-secret" \
+            --wait \
+            --timeout 5m
+
+      - name: Verify deployment
+        run: |
+          kubectl -n webhook-relay rollout status deployment/webhook-relay-api --timeout=120s
+          kubectl -n webhook-relay rollout status deployment/webhook-relay-worker --timeout=120s
