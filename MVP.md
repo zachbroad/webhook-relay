@@ -1,4 +1,4 @@
-# Webhook Relay — MVP
+# NitroHook — MVP
 
 Resume project showcasing Kubernetes, Helm, Terraform, observability (Prometheus/Grafana/OTel), and production-grade Go service design.
 

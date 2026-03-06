@@ -7,7 +7,7 @@ on:
 
 env:
   OCIR_REGISTRY: ${{ vars.OCI_REGION }}.ocir.io
-  OCIR_REPO_PREFIX: ${{ vars.OCI_REGION }}.ocir.io/${{ vars.OCIR_NAMESPACE }}/webhook-relay
+  OCIR_REPO_PREFIX: ${{ vars.OCI_REGION }}.ocir.io/${{ vars.OCIR_NAMESPACE }}/nitrohook
 
 jobs:
   test:
@@ -96,9 +96,9 @@ jobs:
 
       - name: Create OCIR pull secret
         run: |
-          kubectl create namespace webhook-relay --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace nitrohook --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret docker-registry ocir-secret \
-            --namespace webhook-relay \
+            --namespace nitrohook \
             --docker-server=${{ env.OCIR_REGISTRY }} \
             --docker-username="${{ vars.OCIR_NAMESPACE }}/${{ vars.OCI_USERNAME }}" \
             --docker-password="${{ secrets.OCI_AUTH_TOKEN }}" \
@@ -106,8 +106,8 @@ jobs:
 
       - name: Deploy Helm chart
         run: |
-          helm upgrade --install webhook-relay ./charts/webhook-relay \
-            --namespace webhook-relay \
+          helm upgrade --install nitrohook ./charts/nitrohook \
+            --namespace nitrohook \
             --create-namespace \
             --set image.api.repository=${{ env.OCIR_REPO_PREFIX }}-api \
             --set image.api.tag=${{ github.sha }} \
@@ -121,5 +121,5 @@ jobs:
 
       - name: Verify deployment
         run: |
-          kubectl -n webhook-relay rollout status deployment/webhook-relay-api --timeout=120s
-          kubectl -n webhook-relay rollout status deployment/webhook-relay-worker --timeout=120s
+          kubectl -n nitrohook rollout status deployment/nitrohook-api --timeout=120s
+          kubectl -n nitrohook rollout status deployment/nitrohook-worker --timeout=120s

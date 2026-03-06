@@ -19,7 +19,7 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		DatabaseURL:       envOrDefault("DATABASE_URL", "postgres://relay:relay@localhost:5432/webhook_relay?sslmode=disable"),
+		DatabaseURL:       envOrDefault("DATABASE_URL", "postgres://relay:relay@localhost:5432/nitrohook?sslmode=disable"),
 		RedisURL:          envOrDefault("REDIS_URL", "redis://localhost:6379"),
 		Port:              envOrDefault("PORT", "8080"),
 		WorkerConcurrency: envOrDefaultInt("WORKER_CONCURRENCY", 4),

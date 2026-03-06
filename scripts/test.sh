@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
-DB_URL="${DATABASE_URL:-postgres://relay:relay@localhost:5432/webhook_relay?sslmode=disable}"
+DB_URL="${DATABASE_URL:-postgres://relay:relay@localhost:5432/nitrohook?sslmode=disable}"
 SOURCE_SLUG="my-app"
 
 # Colors

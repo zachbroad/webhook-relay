@@ -14,10 +14,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/zachbroad/webhook-relay/internal/model"
-	"github.com/zachbroad/webhook-relay/internal/script"
-	"github.com/zachbroad/webhook-relay/internal/signing"
-	"github.com/zachbroad/webhook-relay/internal/store"
+	"github.com/zachbroad/nitrohook/internal/model"
+	"github.com/zachbroad/nitrohook/internal/script"
+	"github.com/zachbroad/nitrohook/internal/signing"
+	"github.com/zachbroad/nitrohook/internal/store"
 )
 
 const (

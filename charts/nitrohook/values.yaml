@@ -1,15 +1,15 @@
 ## Global image settings
 image:
   api:
-    repository: webhook-relay-api
+    repository: nitrohook-api
     tag: "" # defaults to appVersion
     pullPolicy: IfNotPresent
   worker:
-    repository: webhook-relay-worker
+    repository: nitrohook-worker
     tag: ""
     pullPolicy: IfNotPresent
   migrate:
-    repository: webhook-relay-migrate
+    repository: nitrohook-migrate
     tag: ""
     pullPolicy: IfNotPresent
 
@@ -44,12 +44,12 @@ api:
   ingress:
     enabled: true
     className: nginx
-    host: webhook-relay.local
+    host: nitrohook.local
     annotations: {}
     tls: []
-    #  - secretName: webhook-relay-tls
+    #  - secretName: nitrohook-tls
     #    hosts:
-    #      - webhook-relay.local
+    #      - nitrohook.local
 
 ## Worker configuration
 worker:
@@ -79,7 +79,7 @@ postgres:
     pullPolicy: IfNotPresent
   user: relay
   password: relay
-  database: webhook_relay
+  database: nitrohook
   storage: 5Gi
   storageClass: ""
   resources:

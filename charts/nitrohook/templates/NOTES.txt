@@ -1,4 +1,4 @@
-webhook-relay has been deployed!
+nitrohook has been deployed!
 
 Components:
   - API:      {{ .Values.api.replicaCount }} replica(s)
@@ -16,7 +16,7 @@ If using minikube, add the host to /etc/hosts:
 {{- else }}
 
 To access the API, forward the service port:
-  kubectl port-forward svc/{{ include "webhook-relay.fullname" . }}-api 8080:80
+  kubectl port-forward svc/{{ include "nitrohook.fullname" . }}-api 8080:80
 {{- end }}
 
 To seed a webhook source:

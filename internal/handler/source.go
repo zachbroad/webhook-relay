@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zachbroad/webhook-relay/internal/script"
-	"github.com/zachbroad/webhook-relay/internal/store"
+	"github.com/zachbroad/nitrohook/internal/script"
+	"github.com/zachbroad/nitrohook/internal/store"
 )
 
 type SourceHandler struct {

@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "webhook-relay.fullname" . }}-redis
+  name: {{ include "nitrohook.fullname" . }}-redis
   labels:
-    {{- include "webhook-relay.labels" . | nindent 4 }}
+    {{- include "nitrohook.labels" . | nindent 4 }}
     app.kubernetes.io/component: redis
 spec:
-  serviceName: {{ include "webhook-relay.fullname" . }}-redis
+  serviceName: {{ include "nitrohook.fullname" . }}-redis
   replicas: 1
   selector:
     matchLabels:
-      {{- include "webhook-relay.selectorLabels" . | nindent 6 }}
+      {{- include "nitrohook.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: redis
   template:
     metadata:
       labels:
-        {{- include "webhook-relay.selectorLabels" . | nindent 8 }}
+        {{- include "nitrohook.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
     spec:
       containers:

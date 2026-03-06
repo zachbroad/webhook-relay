@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Webhook relay/fan-out service in Go. Receives incoming webhooks via HTTP, stores them in Postgres, publishes to a Redis Stream, and a worker fans out deliveries to registered actions (webhook endpoints or JavaScript scripts) with retry logic, idempotency, and HMAC signing.
+NitroHook/fan-out service in Go. Receives incoming webhooks via HTTP, stores them in Postgres, publishes to a Redis Stream, and a worker fans out deliveries to registered actions (webhook endpoints or JavaScript scripts) with retry logic, idempotency, and HMAC signing.
 
 ## Build & Run Commands
 

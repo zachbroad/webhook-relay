@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zachbroad/webhook-relay/internal/store"
+	"github.com/zachbroad/nitrohook/internal/store"
 )
 
 type DeliveryHandler struct {

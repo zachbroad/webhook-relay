@@ -1,6 +1,6 @@
-# Webhook Relay
+# NitroHook
 
-Webhook relay/fan-out service in Go. Receives incoming webhooks via HTTP, stores them in Postgres, publishes to a Redis Stream, and a worker fans out deliveries to registered actions with retry logic, idempotency, and HMAC signing.
+NitroHook/fan-out service in Go. Receives incoming webhooks via HTTP, stores them in Postgres, publishes to a Redis Stream, and a worker fans out deliveries to registered actions with retry logic, idempotency, and HMAC signing.
 
 ## CI/CD
 

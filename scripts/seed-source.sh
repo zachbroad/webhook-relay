@@ -3,7 +3,7 @@
 # Usage: ./scripts/seed-source.sh [slug] [name]
 set -euo pipefail
 
-DB_URL="${DATABASE_URL:-postgres://relay:relay@localhost:5432/webhook_relay?sslmode=disable}"
+DB_URL="${DATABASE_URL:-postgres://relay:relay@localhost:5432/nitrohook?sslmode=disable}"
 SLUG="${1:-my-app}"
 NAME="${2:-My App}"
 

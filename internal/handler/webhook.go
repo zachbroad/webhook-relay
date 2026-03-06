@@ -10,8 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/zachbroad/webhook-relay/internal/model"
-	"github.com/zachbroad/webhook-relay/internal/store"
+	"github.com/zachbroad/nitrohook/internal/model"
+	"github.com/zachbroad/nitrohook/internal/store"
 )
 
 type WebhookHandler struct {

@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_USER: relay
       POSTGRES_PASSWORD: relay
-      POSTGRES_DB: webhook_relay
+      POSTGRES_DB: nitrohook
     ports:
       - "5432:5432"
     volumes:
@@ -25,7 +25,7 @@ services:
       - "8080:8080"
     env_file: .env
     environment:
-      DATABASE_URL: postgres://relay:relay@postgres:5432/webhook_relay?sslmode=disable
+      DATABASE_URL: postgres://relay:relay@postgres:5432/nitrohook?sslmode=disable
       REDIS_URL: redis://redis:6379
     depends_on:
       - postgres
@@ -37,7 +37,7 @@ services:
       dockerfile: Dockerfile.worker
     env_file: .env
     environment:
-      DATABASE_URL: postgres://relay:relay@postgres:5432/webhook_relay?sslmode=disable
+      DATABASE_URL: postgres://relay:relay@postgres:5432/nitrohook?sslmode=disable
       REDIS_URL: redis://redis:6379
     depends_on:
       - postgres

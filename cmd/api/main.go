@@ -13,12 +13,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
-	"github.com/zachbroad/webhook-relay/internal/config"
-	"github.com/zachbroad/webhook-relay/internal/database"
-	"github.com/zachbroad/webhook-relay/internal/handler"
-	"github.com/zachbroad/webhook-relay/internal/store"
-	"github.com/zachbroad/webhook-relay/internal/worker"
-	"github.com/zachbroad/webhook-relay/web"
+	"github.com/zachbroad/nitrohook/internal/config"
+	"github.com/zachbroad/nitrohook/internal/database"
+	"github.com/zachbroad/nitrohook/internal/handler"
+	"github.com/zachbroad/nitrohook/internal/store"
+	"github.com/zachbroad/nitrohook/internal/worker"
+	"github.com/zachbroad/nitrohook/web"
 )
 
 func main() {

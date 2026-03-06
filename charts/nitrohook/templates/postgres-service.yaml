@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "webhook-relay.fullname" . }}-postgres
+  name: {{ include "nitrohook.fullname" . }}-postgres
   labels:
-    {{- include "webhook-relay.labels" . | nindent 4 }}
+    {{- include "nitrohook.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres
 spec:
   clusterIP: None
   selector:
-    {{- include "webhook-relay.selectorLabels" . | nindent 4 }}
+    {{- include "nitrohook.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: postgres
   ports:
     - port: 5432

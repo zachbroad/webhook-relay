@@ -14,9 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/zachbroad/webhook-relay/internal/model"
-	"github.com/zachbroad/webhook-relay/internal/script"
-	"github.com/zachbroad/webhook-relay/internal/store"
+	"github.com/zachbroad/nitrohook/internal/model"
+	"github.com/zachbroad/nitrohook/internal/script"
+	"github.com/zachbroad/nitrohook/internal/store"
 )
 
 var funcMap = template.FuncMap{

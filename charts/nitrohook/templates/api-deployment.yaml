@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "webhook-relay.fullname" . }}-api
+  name: {{ include "nitrohook.fullname" . }}-api
   labels:
-    {{- include "webhook-relay.labels" . | nindent 4 }}
+    {{- include "nitrohook.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
   replicas: {{ .Values.api.replicaCount }}
   selector:
     matchLabels:
-      {{- include "webhook-relay.selectorLabels" . | nindent 6 }}
+      {{- include "nitrohook.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: api
   template:
     metadata:
@@ -17,7 +17,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
-        {{- include "webhook-relay.selectorLabels" . | nindent 8 }}
+        {{- include "nitrohook.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: api
     spec:
       {{- with .Values.imagePullSecrets }}
@@ -27,7 +27,7 @@ spec:
       {{- if .Values.api.migration.enabled }}
       initContainers:
         - name: migrate
-          image: "{{ .Values.image.migrate.repository }}:{{ .Values.image.migrate.tag | default (include "webhook-relay.imageTag" .) }}"
+          image: "{{ .Values.image.migrate.repository }}:{{ .Values.image.migrate.tag | default (include "nitrohook.imageTag" .) }}"
           imagePullPolicy: {{ .Values.image.migrate.pullPolicy }}
           args:
             - -database
@@ -39,14 +39,14 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "webhook-relay.secretName" . }}
+                  name: {{ include "nitrohook.secretName" . }}
                   key: DATABASE_URL
           resources:
             {{- toYaml .Values.api.migration.resources | nindent 12 }}
       {{- end }}
       containers:
         - name: api
-          image: "{{ .Values.image.api.repository }}:{{ .Values.image.api.tag | default (include "webhook-relay.imageTag" .) }}"
+          image: "{{ .Values.image.api.repository }}:{{ .Values.image.api.tag | default (include "nitrohook.imageTag" .) }}"
           imagePullPolicy: {{ .Values.image.api.pullPolicy }}
           ports:
             - name: http
@@ -56,16 +56,16 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "webhook-relay.secretName" . }}
+                  name: {{ include "nitrohook.secretName" . }}
                   key: DATABASE_URL
             - name: REDIS_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "webhook-relay.secretName" . }}
+                  name: {{ include "nitrohook.secretName" . }}
                   key: REDIS_URL
           envFrom:
             - configMapRef:
-                name: {{ include "webhook-relay.fullname" . }}
+                name: {{ include "nitrohook.fullname" . }}
           livenessProbe:
             httpGet:
               path: /healthz

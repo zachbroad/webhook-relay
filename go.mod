@@ -1,4 +1,4 @@
-module github.com/zachbroad/webhook-relay
+module github.com/zachbroad/nitrohook
 
 go 1.24.0
 

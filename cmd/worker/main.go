@@ -11,10 +11,10 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
-	"github.com/zachbroad/webhook-relay/internal/config"
-	"github.com/zachbroad/webhook-relay/internal/database"
-	"github.com/zachbroad/webhook-relay/internal/store"
-	"github.com/zachbroad/webhook-relay/internal/worker"
+	"github.com/zachbroad/nitrohook/internal/config"
+	"github.com/zachbroad/nitrohook/internal/database"
+	"github.com/zachbroad/nitrohook/internal/store"
+	"github.com/zachbroad/nitrohook/internal/worker"
 )
 
 func main() {

@@ -1,6 +1,6 @@
 .PHONY: run-api run-worker build test docker-build docker-up docker-down migrate-up migrate-down migrate-create
 
-DATABASE_URL ?= postgres://relay:relay@localhost:5432/webhook_relay?sslmode=disable
+DATABASE_URL ?= postgres://relay:relay@localhost:5432/nitrohook?sslmode=disable
 
 run-api:
 	go run ./cmd/api

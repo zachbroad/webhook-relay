@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "webhook-relay.fullname" . }}-worker
+  name: {{ include "nitrohook.fullname" . }}-worker
   labels:
-    {{- include "webhook-relay.labels" . | nindent 4 }}
+    {{- include "nitrohook.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
   replicas: {{ .Values.worker.replicaCount }}
   selector:
     matchLabels:
-      {{- include "webhook-relay.selectorLabels" . | nindent 6 }}
+      {{- include "nitrohook.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: worker
   template:
     metadata:
@@ -17,7 +17,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
-        {{- include "webhook-relay.selectorLabels" . | nindent 8 }}
+        {{- include "nitrohook.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: worker
     spec:
       {{- with .Values.imagePullSecrets }}
@@ -26,7 +26,7 @@ spec:
       {{- end }}
       containers:
         - name: worker
-          image: "{{ .Values.image.worker.repository }}:{{ .Values.image.worker.tag | default (include "webhook-relay.imageTag" .) }}"
+          image: "{{ .Values.image.worker.repository }}:{{ .Values.image.worker.tag | default (include "nitrohook.imageTag" .) }}"
           imagePullPolicy: {{ .Values.image.worker.pullPolicy }}
           ports:
             - name: health
@@ -36,16 +36,16 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "webhook-relay.secretName" . }}
+                  name: {{ include "nitrohook.secretName" . }}
                   key: DATABASE_URL
             - name: REDIS_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "webhook-relay.secretName" . }}
+                  name: {{ include "nitrohook.secretName" . }}
                   key: REDIS_URL
           envFrom:
             - configMapRef:
-                name: {{ include "webhook-relay.fullname" . }}
+                name: {{ include "nitrohook.fullname" . }}
           livenessProbe:
             httpGet:
               path: /healthz

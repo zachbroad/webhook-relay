@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "webhook-relay.fullname" . }}-api
+  name: {{ include "nitrohook.fullname" . }}-api
   labels:
-    {{- include "webhook-relay.labels" . | nindent 4 }}
+    {{- include "nitrohook.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
   {{- with .Values.api.ingress.annotations }}
   annotations:
@@ -24,7 +24,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "webhook-relay.fullname" . }}-api
+                name: {{ include "nitrohook.fullname" . }}-api
                 port:
                   name: http
 {{- end }}

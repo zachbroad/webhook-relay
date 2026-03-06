@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/zachbroad/webhook-relay/internal/model"
+	"github.com/zachbroad/nitrohook/internal/model"
 )
 
 type ActionStore struct {
