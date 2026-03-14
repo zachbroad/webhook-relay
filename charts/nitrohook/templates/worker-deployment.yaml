@@ -24,6 +24,13 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      initContainers:
+        - name: wait-for-postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          command: ['sh', '-c', 'until pg_isready -h {{ include "nitrohook.fullname" . }}-postgres -p 5432 -U {{ .Values.postgres.user }}; do echo "Waiting for postgres..."; sleep 2; done']
+        - name: wait-for-redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          command: ['sh', '-c', 'until redis-cli -h {{ include "nitrohook.fullname" . }}-redis ping | grep -q PONG; do echo "Waiting for redis..."; sleep 2; done']
       containers:
         - name: worker
           image: "{{ .Values.image.worker.repository }}:{{ .Values.image.worker.tag | default (include "nitrohook.imageTag" .) }}"

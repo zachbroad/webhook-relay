@@ -117,7 +117,7 @@ jobs:
             --set image.migrate.tag=${{ github.sha }} \
             --set "imagePullSecrets[0].name=ocir-secret" \
             --wait \
-            --timeout 5m
+            --timeout 10m
 
       - name: Verify deployment
         run: |

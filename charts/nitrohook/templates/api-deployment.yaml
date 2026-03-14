@@ -26,6 +26,9 @@ spec:
       {{- end }}
       {{- if .Values.api.migration.enabled }}
       initContainers:
+        - name: wait-for-postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          command: ['sh', '-c', 'until pg_isready -h {{ include "nitrohook.fullname" . }}-postgres -p 5432 -U {{ .Values.postgres.user }}; do echo "Waiting for postgres..."; sleep 2; done']
         - name: migrate
           image: "{{ .Values.image.migrate.repository }}:{{ .Values.image.migrate.tag | default (include "nitrohook.imageTag" .) }}"
           imagePullPolicy: {{ .Values.image.migrate.pullPolicy }}
